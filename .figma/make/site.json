@@ -1,0 +1,10 @@
+{
+  "description": "This tool helps barangay sanitation crews and officials prioritize cleanup efforts by ranking dumping hotspots based on citizen reports and image analysis.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
