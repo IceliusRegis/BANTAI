@@ -210,11 +210,16 @@ class BantaiPotholeService:
         fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        fourcc = cv2.VideoWriter_fourcc(*"avc1")
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         out = cv2.VideoWriter(str(output_path), fourcc, fps, (width, height))
         if not out.isOpened():
-            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            fourcc = cv2.VideoWriter_fourcc(*"avc1")
             out = cv2.VideoWriter(str(output_path), fourcc, fps, (width, height))
+
+        if not out.isOpened():
+            print(f"[BantaiPotholeService] VideoWriter could not be opened for {output_path}", flush=True)
+            cap.release()
+            return output_path
 
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         frame_count = max(1, len(frame_entries))
