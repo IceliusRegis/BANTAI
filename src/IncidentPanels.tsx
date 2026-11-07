@@ -98,6 +98,43 @@ function SvgBoundingBoxes({
   detections?: TrashDetection[]
   defects?: RoadDefect[]
 }) {
+  const multiItemRegions = (regions || []).filter(r => r.item_count >= 2)
+  const groupedMemberIndices = new Set<number>()
+  for (const reg of multiItemRegions) {
+    if (Array.isArray(reg.member_indices)) {
+      for (const mIdx of reg.member_indices) {
+        groupedMemberIndices.add(mIdx)
+      }
+    }
+  }
+
+  function isDetectionInMultiItemGroup(det: TrashDetection, idx: number): boolean {
+    if (groupedMemberIndices.has(idx)) return true
+    if (typeof det.detection_id === 'number' && groupedMemberIndices.has(det.detection_id - 1)) {
+      return true
+    }
+    const [bx, by, bw, bh] = det.bbox
+    const cx = bx + bw / 2
+    const cy = by + bh / 2
+    const detArea = Math.max(1, bw * bh)
+
+    for (const reg of multiItemRegions) {
+      const [rx, ry, rw, rh] = reg.bbox
+      if (cx >= rx - 4 && cx <= rx + rw + 4 && cy >= ry - 4 && cy <= ry + rh + 4) {
+        return true
+      }
+      const interX1 = Math.max(bx, rx)
+      const interY1 = Math.max(by, ry)
+      const interX2 = Math.min(bx + bw, rx + rw)
+      const interY2 = Math.min(by + bh, ry + rh)
+      if (interX2 > interX1 && interY2 > interY1) {
+        const interArea = (interX2 - interX1) * (interY2 - interY1)
+        if (interArea / detArea >= 0.5) return true
+      }
+    }
+    return false
+  }
+
   return (
     <svg
       viewBox={`0 0 ${imgW} ${imgH}`}
@@ -112,9 +149,7 @@ function SvgBoundingBoxes({
       }}
     >
       {/* 1. Multi-item Region Boxes (k >= 2) */}
-      {regions
-        ?.filter(r => r.item_count >= 2)
-        .map((reg, idx) => {
+      {multiItemRegions.map((reg, idx) => {
           const [bx, by, bw, bh] = reg.bbox
           const isPile = reg.category === 'garbage_pile'
           const strokeColor = isPile ? '#ff8c00' : '#00b4d8'
@@ -162,8 +197,9 @@ function SvgBoundingBoxes({
           )
         })}
 
-      {/* 2. Individual Detection Boxes */}
+      {/* 2. Individual Detection Boxes (only standalone items not inside any DBSCAN group) */}
       {detections?.map((det, idx) => {
+        if (isDetectionInMultiItemGroup(det, idx)) return null
         const [bx, by, bw, bh] = det.bbox
         let color = '#3cb44b' // Plastic: Green
         if (det.bantai_category === 'Potentially Hazardous') color = '#e6194b'
