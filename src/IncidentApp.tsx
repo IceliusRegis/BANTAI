@@ -9,7 +9,6 @@ import {
   addResidentReport,
   reviewReport,
   updateIncident,
-  addVideoObservations,
   deleteRejectedReport,
   clearRejectedReports,
 } from './incidents'
@@ -19,7 +18,6 @@ import {
   MyReports,
   ReviewQueue,
   Incidents,
-  VideoMonitor,
   HotspotLeaderboard,
   Status,
   formatDate,
@@ -82,7 +80,6 @@ export default function IncidentApp() {
           ['overview', 'Operations Dashboard'],
           ['review', `Review Queue (${pending})`],
           ['incidents', 'Incident Records'],
-          ['video', 'CCTV / Dashcam Ingest'],
         ]
 
   function switchMode(next: 'user' | 'admin') {
@@ -169,9 +166,7 @@ export default function IncidentApp() {
                 ? 'Barangay Verification Queue'
                 : page === 'incidents'
                   ? 'Consolidated Incident Records'
-                  : page === 'video'
-                    ? 'CCTV & Mobile Dashcam Ingestion'
-                    : 'Submit a Street-Level Report'}
+                  : 'Submit a Street-Level Report'}
         </h1>
         <p className="lead-copy">
           Report roadside trash or road potholes with photo or video evidence. Track every submission from AI analysis to barangay verification and field resolution.
@@ -270,31 +265,6 @@ export default function IncidentApp() {
               setStore(s => updateIncident(s, id, status, note, new Date().toISOString()))
               setNotice(`${id} status updated to ${status}.`)
             }}
-          />
-        )}
-
-        {page === 'video' && mode === 'admin' && (
-          <VideoMonitor
-            onGenerate={(location, category) => {
-              setStore(s =>
-                addVideoObservations(
-                  s,
-                  location,
-                  category,
-                  new Date().toISOString(),
-                  crypto.randomUUID().slice(0, 6)
-                )
-              )
-              setNotice('Three patrol baseline observations added to the verification queue.')
-            }}
-            onAddRealObservations={newObs => {
-              setStore(s => ({ ...s, observations: [...newObs, ...s.observations] }))
-              setNotice(
-                `${newObs.length} extracted video frame observation(s) added to the verification queue.`
-              )
-              setPage('review')
-            }}
-            onReview={() => setPage('review')}
           />
         )}
 
