@@ -1,4 +1,4 @@
-"""BANTAI Dual-Model Municipal Web API Server.
+"""BANTAI Dual-Model Municipal Web API Server (Starlette + Uvicorn).
 
 Serves:
 - GET /api/v1/health: Environment, Model A, and Model B readiness
@@ -8,34 +8,21 @@ Serves:
 from __future__ import annotations
 
 import datetime
-import os
 from pathlib import Path
 import shutil
 import uuid
-from typing import Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from starlette.applications import Starlette
+from starlette.middleware import Middleware
+from starlette.middleware.cors import CORSMiddleware
+from starlette.requests import Request
+from starlette.responses import JSONResponse, FileResponse
+from starlette.routing import Route
 
 from .media_ingestion import ingest_media
 from .trash_service import BantaiTrashService
 from .pothole_service import BantaiPotholeService
 from .fusion import fuse_dual_model_incident
-
-app = FastAPI(
-    title="BANTAI Street Issue AI Detection API",
-    version="1.0.0",
-    description="Dual-Model Street Issue & Spatial Grouping Municipal API",
-)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 STORAGE_ROOT = Path(__file__).resolve().parent / "media_storage"
 STORAGE_ROOT.mkdir(parents=True, exist_ok=True)
@@ -44,11 +31,10 @@ trash_service = BantaiTrashService()
 pothole_service = BantaiPotholeService()
 
 
-@app.get("/api/v1/health")
-def health_check():
+async def health_check(request: Request) -> JSONResponse:
     """Returns system status, CUDA device, and readiness of both models."""
     trash_service.checkpoints_ready = trash_service._verify_checkpoints()
-    return {
+    return JSONResponse({
         "status": "healthy",
         "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "model_a_trash": {
@@ -63,18 +49,23 @@ def health_check():
             "weights_present": pothole_service.is_weights_present(),
             "device": pothole_service.device,
         },
-    }
+    })
 
 
-@app.post("/api/v1/analyze")
-async def analyze_media(
-    file: UploadFile = File(...),
-    location: str = Form("J. P. Rizal St. near Market"),
-    description: Optional[str] = Form(""),
-    sample_fps: float = Form(1.0),
-):
+async def analyze_media(request: Request) -> JSONResponse:
     """Single-pass media upload, 1.0 FPS extraction, Model A + Model B analysis."""
-    # Generate unique incident ID
+    form = await request.form()
+    uploaded_file = form.get("file")
+    if not uploaded_file or not hasattr(uploaded_file, "filename"):
+        return JSONResponse({"error": "No media file uploaded"}, status_code=400)
+
+    location = str(form.get("location", "J. P. Rizal St. near Market"))
+    description = str(form.get("description", ""))
+    try:
+        sample_fps = float(form.get("sample_fps", 1.0))
+    except (ValueError, TypeError):
+        sample_fps = 1.0
+
     today_str = datetime.datetime.now().strftime("%Y%m%d")
     short_uuid = uuid.uuid4().hex[:6].upper()
     incident_id = f"INC-{today_str}-{short_uuid}"
@@ -85,9 +76,9 @@ async def analyze_media(
     frames_dir.mkdir(parents=True, exist_ok=True)
 
     # Save uploaded file
-    uploaded_path = incident_dir / file.filename
+    uploaded_path = incident_dir / uploaded_file.filename
     with open(uploaded_path, "wb") as f_out:
-        shutil.copyfileobj(file.file, f_out)
+        shutil.copyfileobj(uploaded_file.file, f_out)
 
     try:
         # Step 1: Shared Single-Pass Ingestion
@@ -126,16 +117,35 @@ async def analyze_media(
             media_url_prefix="/api/v1/media",
         )
 
-        return JSONResponse(content=unified_response)
+        return JSONResponse(unified_response)
 
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        return JSONResponse({"error": str(exc)}, status_code=500)
 
 
-@app.get("/api/v1/media/{incident_id}/frames/{filename}")
-def serve_extracted_frame(incident_id: str, filename: str):
+async def serve_extracted_frame(request: Request) -> FileResponse | JSONResponse:
     """Serves extracted JPEG frames for display in the website."""
+    incident_id = request.path_params.get("incident_id")
+    filename = request.path_params.get("filename")
     frame_path = STORAGE_ROOT / incident_id / "frames" / filename
     if not frame_path.is_file():
-        raise HTTPException(status_code=404, detail="Frame not found")
+        return JSONResponse({"error": "Frame not found"}, status_code=404)
     return FileResponse(frame_path, media_type="image/jpeg")
+
+
+routes = [
+    Route("/api/v1/health", health_check, methods=["GET"]),
+    Route("/api/v1/analyze", analyze_media, methods=["POST"]),
+    Route("/api/v1/media/{incident_id}/frames/{filename}", serve_extracted_frame, methods=["GET"]),
+]
+
+middleware = [
+    Middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+]
+
+app = Starlette(routes=routes, middleware=middleware)
