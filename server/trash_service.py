@@ -89,14 +89,12 @@ class BantaiTrashService:
         runs = self.repo_root / "runs/training"
         champion = runs / "stage5-d095-box-contrastive-20261102-a/checkpoints/best-inference/model.safetensors"
         run1 = runs / "stage5-paper-7604c2228fa94ba58dd3be0a770cf6f4/checkpoints/epoch-02/model.safetensors"
-        baseline_step = runs / "taco-896e2f44146d4d54aee518e6087908ca/checkpoints/step-000350/model.safetensors"
         baseline_epoch = runs / "taco-896e2f44146d4d54aee518e6087908ca/checkpoints/epoch-02/model.safetensors"
-        scale576 = runs / "scale576-integration-c70249cde2f2422cb89b22232fd2b525/record.json"
 
         return {
             "d095_champion": champion.is_file(),
             "stage5_run1": run1.is_file(),
-            "warmstart_baseline": baseline_step.is_file() and baseline_epoch.is_file() and scale576.is_file(),
+            "warmstart_baseline": baseline_epoch.is_file(),
         }
 
     def is_fully_available(self) -> bool:
@@ -221,18 +219,65 @@ class BantaiTrashService:
         score_threshold: float,
         top_k: int,
     ) -> List[Dict[str, Any]]:
-        """Run Grounding DINO 3-model inference, consensus, and D-112 grouping on GPU."""
-        from scripts.taco_stage5_video_extract_and_detect import run_three_model_inference
-        from scripts.taco_stage5_multiscale_consensus import apply_scene_consensus
+        """Run Grounding DINO 3-model inference, consensus, and D-112 grouping completely offline."""
+        from PIL import Image
+        import torch
+        from transformers import AutoProcessor, AutoModelForZeroShotObjectDetection
+        from scripts.taco_stage5_video_extract_and_detect import run_single_model_inference
+        from scripts.taco_stage5_consensus_tiebreak import apply_scene_consensus
         from scripts.taco_stage5_display_profiles import visible_rows
         from scripts.taco_stage5_spatial_grouping import compute_spatial_grouping, DEFAULT_MIN_PILE_ITEMS
 
-        inference_results = run_three_model_inference(
-            repo_root=self.repo_root,
-            frames_dir=frames_dir,
-            frame_entries=frame_entries,
-            device=self.device,
+        d095_dir = self.repo_root / "runs/training/stage5-d095-box-contrastive-20261102-a/checkpoints/best-inference"
+        run1_dir = self.repo_root / "runs/training/stage5-paper-7604c2228fa94ba58dd3be0a770cf6f4/checkpoints/epoch-02"
+        base_dir = self.repo_root / "runs/training/taco-896e2f44146d4d54aee518e6087908ca/checkpoints/epoch-02"
+
+        loaded_images = []
+        for entry in frame_entries:
+            p = frames_dir / entry["file_name"]
+            with Image.open(p) as img:
+                loaded_images.append((entry["id"], img.convert("RGB")))
+
+        if not loaded_images:
+            return []
+
+        processor = AutoProcessor.from_pretrained(d095_dir, local_files_only=True)
+
+        # 1. Champion D-095
+        print(f"[BantaiTrashService] Running D-095 Champion ({len(loaded_images)} frames) on {self.device}...", flush=True)
+        m_d095 = AutoModelForZeroShotObjectDetection.from_pretrained(d095_dir, local_files_only=True)
+        m_d095.to(self.device)
+        _, d095_raw, d095_scores = run_single_model_inference(
+            m_d095, processor, loaded_images, shortest=384, longest=576, device=self.device, desc="D-095"
         )
+        del m_d095
+        if self.device == "cuda":
+            torch.cuda.empty_cache()
+        gc.collect()
+
+        # 2. Stage 5 Run 1
+        print(f"[BantaiTrashService] Running Stage 5 Run 1 ({len(loaded_images)} frames) on {self.device}...", flush=True)
+        m_run1 = AutoModelForZeroShotObjectDetection.from_pretrained(run1_dir, local_files_only=True)
+        m_run1.to(self.device)
+        _, run1_raw, _ = run_single_model_inference(
+            m_run1, processor, loaded_images, shortest=256, longest=384, device=self.device, desc="Run1"
+        )
+        del m_run1
+        if self.device == "cuda":
+            torch.cuda.empty_cache()
+        gc.collect()
+
+        # 3. Baseline Stage 4
+        print(f"[BantaiTrashService] Running Baseline Stage 4 ({len(loaded_images)} frames) on {self.device}...", flush=True)
+        m_base = AutoModelForZeroShotObjectDetection.from_pretrained(base_dir, local_files_only=True)
+        m_base.to(self.device)
+        _, base_raw, _ = run_single_model_inference(
+            m_base, processor, loaded_images, shortest=384, longest=576, device=self.device, desc="Baseline"
+        )
+        del m_base
+        if self.device == "cuda":
+            torch.cuda.empty_cache()
+        gc.collect()
 
         frame_results = []
         for entry in frame_entries:
@@ -240,15 +285,10 @@ class BantaiTrashService:
             w, h = entry["width"], entry["height"]
             sha = entry.get("file_sha256", "")
 
-            d095_rows = inference_results["D-095 Champion (soup 50/50)"][img_id]
-            d095_svec = inference_results["d095_scores"][img_id]
-            base_rows = inference_results["Baseline"][img_id]
-            run1_rows = inference_results["Stage 5 (256/384)"][img_id]
-
             # Exact Stage 5 D-111/D-112 Consensus Parameters
             c_rows, _, _ = apply_scene_consensus(
-                d095_rows,
-                d095_svec,
+                d095_raw.get(img_id, []),
+                d095_scores.get(img_id, np.zeros(9, dtype=np.float32)),
                 image_width=w,
                 image_height=h,
                 delta=0.016,
@@ -261,8 +301,8 @@ class BantaiTrashService:
                 enable_rule5=True,
                 enable_rule6=True,
                 enable_rule7=True,
-                baseline_rows=base_rows,
-                run1_rows=run1_rows,
+                baseline_rows=base_raw.get(img_id, []),
+                run1_rows=run1_raw.get(img_id, []),
             )
 
             # Strict 9-specific scheme, calibrated score >= 0.15, containment NMS
@@ -274,7 +314,12 @@ class BantaiTrashService:
             )[:top_k]
 
             # D-112 Disjoint Spatial Grouping
-            grouping = compute_spatial_grouping(filtered, image_width=w, image_height=h, min_pile_items=DEFAULT_MIN_PILE_ITEMS)
+            grouping = compute_spatial_grouping(
+                filtered,
+                image_width=w,
+                image_height=h,
+                min_pile_items=DEFAULT_MIN_PILE_ITEMS
+            )
 
             # Cache the result
             if sha:
@@ -282,15 +327,6 @@ class BantaiTrashService:
                 self._save_cache()
 
             frame_results.append(self._format_frame_findings(entry, filtered, grouping))
-
-        # Clear VRAM after Model A finishes
-        if self.device == "cuda":
-            try:
-                import torch
-                torch.cuda.empty_cache()
-            except Exception:
-                pass
-        gc.collect()
 
         return frame_results
 

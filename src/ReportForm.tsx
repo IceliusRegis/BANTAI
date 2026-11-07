@@ -175,18 +175,30 @@ export default function ReportForm({ onSubmit }: { onSubmit: (report: ReportSubm
 
           setPotholeCount(totalP)
           setTrashCount(totalT)
-          setBoxes(mappedFrames[0]?.boxes || [])
-          setRegions(mappedFrames[0]?.regions || [])
-          setDetections(mappedFrames[0]?.detections || [])
-          setDefects(mappedFrames[0]?.defects || [])
-          setImageWidth(mappedFrames[0]?.width)
-          setImageHeight(mappedFrames[0]?.height)
 
-          if (mappedFrames[0]?.frameUrl) setPhoto(mappedFrames[0].frameUrl)
+          // Auto-select peak detection frame
+          let bestFrame = mappedFrames[0]
+          let maxCount = -1
+          for (const f of mappedFrames) {
+            const count = (f.trashCount || 0) + (f.potholeCount || 0)
+            if (count > maxCount) {
+              maxCount = count
+              bestFrame = f
+            }
+          }
+
+          setBoxes(bestFrame?.boxes || [])
+          setRegions(bestFrame?.regions || [])
+          setDetections(bestFrame?.detections || [])
+          setDefects(bestFrame?.defects || [])
+          setImageWidth(bestFrame?.width)
+          setImageHeight(bestFrame?.height)
+
+          if (bestFrame?.frameUrl) setPhoto(bestFrame.frameUrl)
           if (data.preview_video_url) setPreviewVideoUrl(data.preview_video_url)
 
-          if (totalP > 0 && totalT === 0) setCategory('Pothole')
-          else if (totalT > 0 && totalP === 0) setCategory('Garbage pile')
+          if (totalT > 0 && totalT >= totalP) setCategory('Garbage pile')
+          else if (totalP > 0) setCategory('Pothole')
         } else {
           // Photo
           const f0 = data.frames && data.frames[0]
@@ -207,8 +219,8 @@ export default function ReportForm({ onSubmit }: { onSubmit: (report: ReportSubm
 
           if (f0?.frame_url) setPhoto(f0.frame_url)
 
-          if (pFound > 0 && tFound === 0) setCategory('Pothole')
-          else if (tFound > 0 && pFound === 0) setCategory('Garbage pile')
+          if (tFound > 0 && tFound >= pFound) setCategory('Garbage pile')
+          else if (pFound > 0) setCategory('Pothole')
         }
       }
     } catch (err) {
@@ -324,7 +336,7 @@ export default function ReportForm({ onSubmit }: { onSubmit: (report: ReportSubm
                   detections={detections}
                   imageWidth={imageWidth}
                   imageHeight={imageHeight}
-                  showAdminOverlay={false}
+                  showAdminOverlay={true}
                 />
               </div>
             ) : (

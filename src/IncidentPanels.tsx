@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import {
   categories,
   locations,
@@ -42,7 +42,7 @@ export function PlainStatus({ value }: { value: string }) {
   return <span className={`incident-status ${item.colorClass}`}>{item.label}</span>
 }
 
-export function Evidence({ report, showAdminOverlay = false }: { report: Observation; showAdminOverlay?: boolean }) {
+export function Evidence({ report, showAdminOverlay = true }: { report: Observation; showAdminOverlay?: boolean }) {
   return (
     <MediaDetectionViewer
       photo={report.photo}
@@ -93,7 +93,26 @@ export function MediaDetectionViewer({
   showAdminOverlay?: boolean
 }) {
   const [showBoxes, setShowBoxes] = useState(true)
-  const [selectedFrameIdx, setSelectedFrameIdx] = useState(0)
+  const initialFrameIdx = useMemo(() => {
+    if (!frames || frames.length === 0) return 0
+    let bestIdx = 0
+    let maxCount = -1
+    frames.forEach((f, idx) => {
+      const c = (f.trashCount || 0) + (f.potholeCount || 0)
+      if (c > maxCount) {
+        maxCount = c
+        bestIdx = idx
+      }
+    })
+    return bestIdx >= 0 ? bestIdx : 0
+  }, [frames])
+
+  const [selectedFrameIdx, setSelectedFrameIdx] = useState(initialFrameIdx)
+
+  useEffect(() => {
+    setSelectedFrameIdx(initialFrameIdx)
+  }, [initialFrameIdx])
+
   const [isPlayingPreview, setIsPlayingPreview] = useState(false)
 
   const isVideo = mediaType === 'video' || (frames && frames.length > 0)
@@ -533,7 +552,7 @@ export function MyReports({ store }: { store: Store }) {
               <PlainStatus value={incident?.status || report.review} />
             </div>
 
-            <Evidence report={report} showAdminOverlay={false} />
+            <Evidence report={report} showAdminOverlay={true} />
 
             <div
               style={{
