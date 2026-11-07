@@ -591,6 +591,24 @@ export function updateIncident(
   }
 }
 
+export function deleteRejectedReport(store: Store, reportId: string): Store {
+  const target = store.observations.find(o => o.id === reportId)
+  if (!target || target.review !== 'Rejected') return store
+  return {
+    ...store,
+    observations: store.observations.filter(o => o.id !== reportId),
+  }
+}
+
+export function clearRejectedReports(store: Store, reporter = residentId): Store {
+  return {
+    ...store,
+    observations: store.observations.filter(
+      o => !(o.reporter === reporter && o.review === 'Rejected'),
+    ),
+  }
+}
+
 export function addVideoObservations(
   store: Store,
   location: string,

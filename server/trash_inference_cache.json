@@ -13613,5 +13613,290 @@
         "garbage_pile_count": 0
       }
     }
+  },
+  "6f2ffa1d805a68db895e2f3e3cc0a4e0edb38da99fdb3f1e07f77972c0607867": {
+    "detections": [
+      {
+        "image_id": 10000,
+        "query_id": 0,
+        "category_id": 8,
+        "score": 0.372261106967926,
+        "bbox": [
+          516.9771909713745,
+          1343.8023328781128,
+          1054.3674230575562,
+          894.7079181671143
+        ],
+        "raw_phrase": "plastic bottle plastic bag plastic wrapper plastic film drink plastic cup paper",
+        "valid_clipped_box": true,
+        "specific_category_id": 8,
+        "specific_class": "paper",
+        "material": "paper_fiber",
+        "hazard_flag": false,
+        "bantai_category": "Paper",
+        "bantai_category_id": 1,
+        "bantai_color": "#808000",
+        "mapped_category": "paper",
+        "taxonomy_scheme": "9-specific",
+        "display_label": "paper"
+      },
+      {
+        "image_id": 10000,
+        "query_id": 1,
+        "category_id": 3,
+        "score": 0.319019615650177,
+        "bbox": [
+          1416.3299649953842,
+          997.4569082260132,
+          873.4208643436432,
+          976.9232273101807
+        ],
+        "raw_phrase": "plastic bottle plastic bag plastic wrapper plastic film plastic cup paper",
+        "valid_clipped_box": true,
+        "raw_category_id": 8,
+        "specific_category_id": 3,
+        "consensus_reassigned": true,
+        "consensus_original_score": 0.319019615650177,
+        "consensus_plastic_max_score": 0.31849727034568787,
+        "specific_class": "plastic_wrapper",
+        "material": "plastic",
+        "hazard_flag": false,
+        "bantai_category": "Plastic",
+        "bantai_category_id": 0,
+        "bantai_color": "#4363d8",
+        "mapped_category": "plastic_wrapper",
+        "taxonomy_scheme": "9-specific",
+        "display_label": "plastic_wrapper"
+      },
+      {
+        "image_id": 10000,
+        "query_id": 3,
+        "category_id": 8,
+        "score": 0.21065934002399445,
+        "bbox": [
+          1351.6266234219074,
+          2834.7563296556473,
+          202.3726925253868,
+          310.0529611110687
+        ],
+        "raw_phrase": "cigarette plastic wrapper plastic film paper",
+        "valid_clipped_box": true,
+        "specific_category_id": 8,
+        "specific_class": "paper",
+        "material": "paper_fiber",
+        "hazard_flag": false,
+        "bantai_category": "Paper",
+        "bantai_category_id": 1,
+        "bantai_color": "#808000",
+        "mapped_category": "paper",
+        "taxonomy_scheme": "9-specific",
+        "display_label": "paper"
+      },
+      {
+        "image_id": 10000,
+        "query_id": 7,
+        "category_id": 3,
+        "score": 0.20860765874385834,
+        "bbox": [
+          1322.7010667324066,
+          2312.6167729496956,
+          196.4598298072815,
+          134.87158715724945
+        ],
+        "raw_phrase": "cigarette",
+        "valid_clipped_box": true,
+        "raw_category_id": 0,
+        "specific_category_id": 3,
+        "consensus_reassigned": true,
+        "sachet_wrapper_reassigned": true,
+        "consensus_rule7a": true,
+        "specific_class": "plastic_wrapper",
+        "material": "plastic",
+        "hazard_flag": false,
+        "bantai_category": "Plastic",
+        "bantai_category_id": 0,
+        "bantai_color": "#4363d8",
+        "mapped_category": "plastic_wrapper",
+        "taxonomy_scheme": "9-specific",
+        "display_label": "plastic_wrapper"
+      }
+    ],
+    "grouping": {
+      "annotated_rows": [
+        {
+          "image_id": 10000,
+          "query_id": 0,
+          "category_id": 8,
+          "score": 0.372261106967926,
+          "bbox": [
+            516.9771909713745,
+            1343.8023328781128,
+            1054.3674230575562,
+            894.7079181671143
+          ],
+          "raw_phrase": "plastic bottle plastic bag plastic wrapper plastic film drink plastic cup paper",
+          "valid_clipped_box": true,
+          "specific_category_id": 8,
+          "specific_class": "paper",
+          "material": "paper_fiber",
+          "hazard_flag": false,
+          "bantai_category": "Paper",
+          "bantai_category_id": 1,
+          "bantai_color": "#808000",
+          "mapped_category": "paper",
+          "taxonomy_scheme": "9-specific",
+          "display_label": "paper",
+          "spatial_group_id": 0,
+          "spatial_category": "group_of_individual_litter",
+          "spatial_label": "Group of Individual Litter"
+        },
+        {
+          "image_id": 10000,
+          "query_id": 1,
+          "category_id": 3,
+          "score": 0.319019615650177,
+          "bbox": [
+            1416.3299649953842,
+            997.4569082260132,
+            873.4208643436432,
+            976.9232273101807
+          ],
+          "raw_phrase": "plastic bottle plastic bag plastic wrapper plastic film plastic cup paper",
+          "valid_clipped_box": true,
+          "raw_category_id": 8,
+          "specific_category_id": 3,
+          "consensus_reassigned": true,
+          "consensus_original_score": 0.319019615650177,
+          "consensus_plastic_max_score": 0.31849727034568787,
+          "specific_class": "plastic_wrapper",
+          "material": "plastic",
+          "hazard_flag": false,
+          "bantai_category": "Plastic",
+          "bantai_category_id": 0,
+          "bantai_color": "#4363d8",
+          "mapped_category": "plastic_wrapper",
+          "taxonomy_scheme": "9-specific",
+          "display_label": "plastic_wrapper",
+          "spatial_group_id": 1,
+          "spatial_category": "individual_litter",
+          "spatial_label": "Individual Litter"
+        },
+        {
+          "image_id": 10000,
+          "query_id": 3,
+          "category_id": 8,
+          "score": 0.21065934002399445,
+          "bbox": [
+            1351.6266234219074,
+            2834.7563296556473,
+            202.3726925253868,
+            310.0529611110687
+          ],
+          "raw_phrase": "cigarette plastic wrapper plastic film paper",
+          "valid_clipped_box": true,
+          "specific_category_id": 8,
+          "specific_class": "paper",
+          "material": "paper_fiber",
+          "hazard_flag": false,
+          "bantai_category": "Paper",
+          "bantai_category_id": 1,
+          "bantai_color": "#808000",
+          "mapped_category": "paper",
+          "taxonomy_scheme": "9-specific",
+          "display_label": "paper",
+          "spatial_group_id": 0,
+          "spatial_category": "group_of_individual_litter",
+          "spatial_label": "Group of Individual Litter"
+        },
+        {
+          "image_id": 10000,
+          "query_id": 7,
+          "category_id": 3,
+          "score": 0.20860765874385834,
+          "bbox": [
+            1322.7010667324066,
+            2312.6167729496956,
+            196.4598298072815,
+            134.87158715724945
+          ],
+          "raw_phrase": "cigarette",
+          "valid_clipped_box": true,
+          "raw_category_id": 0,
+          "specific_category_id": 3,
+          "consensus_reassigned": true,
+          "sachet_wrapper_reassigned": true,
+          "consensus_rule7a": true,
+          "specific_class": "plastic_wrapper",
+          "material": "plastic",
+          "hazard_flag": false,
+          "bantai_category": "Plastic",
+          "bantai_category_id": 0,
+          "bantai_color": "#4363d8",
+          "mapped_category": "plastic_wrapper",
+          "taxonomy_scheme": "9-specific",
+          "display_label": "plastic_wrapper",
+          "spatial_group_id": 0,
+          "spatial_category": "group_of_individual_litter",
+          "spatial_label": "Group of Individual Litter"
+        }
+      ],
+      "regions": [
+        {
+          "group_id": 0,
+          "category": "group_of_individual_litter",
+          "label": "Group of Individual Litter",
+          "bbox": [
+            516.9771909713745,
+            1343.8023328781128,
+            1054.3674230575562,
+            1801.0069578886032
+          ],
+          "item_count": 3,
+          "model_score": null,
+          "member_indices": [
+            0,
+            2,
+            3
+          ],
+          "members": [
+            0,
+            2,
+            3
+          ],
+          "packing_density": 0.5437787357847339,
+          "touching_pairs": 0,
+          "max_iou": 0.0
+        },
+        {
+          "group_id": 1,
+          "category": "individual_litter",
+          "label": "Individual Litter",
+          "bbox": [
+            1416.3299649953842,
+            997.4569082260132,
+            873.4208643436432,
+            976.9232273101807
+          ],
+          "item_count": 1,
+          "model_score": 0.319019615650177,
+          "member_indices": [
+            1
+          ],
+          "members": [
+            1
+          ],
+          "packing_density": 1.0,
+          "touching_pairs": 0,
+          "max_iou": 0.0
+        }
+      ],
+      "summary": {
+        "total_physical_items": 4,
+        "total_regions": 2,
+        "individual_litter_count": 1,
+        "group_of_individual_litter_count": 1,
+        "garbage_pile_count": 0
+      }
+    }
   }
 }

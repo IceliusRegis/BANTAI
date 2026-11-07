@@ -10,6 +10,8 @@ import {
   reviewReport,
   updateIncident,
   addVideoObservations,
+  deleteRejectedReport,
+  clearRejectedReports,
 } from './incidents'
 import type { Store } from './incidents'
 import ReportForm from './ReportForm'
@@ -197,7 +199,10 @@ export default function IncidentApp() {
                   s,
                   {
                     ...report,
-                    photo: firstFrame?.frame_url || report.photo,
+                    photo:
+                      frames && frames.length > 1
+                        ? firstFrame?.frame_url || report.photo
+                        : report.photo || firstFrame?.frame_url,
                     videoUrl: resolvedVideoUrl,
                     detections: firstFrame?.trash_findings?.detections || report.detections,
                     regions: firstFrame?.trash_findings?.region_list || report.regions,
@@ -220,7 +225,19 @@ export default function IncidentApp() {
           />
         )}
 
-        {page === 'mine' && mode === 'user' && <MyReports store={store} />}
+        {page === 'mine' && mode === 'user' && (
+          <MyReports
+            store={store}
+            onDeleteRejected={id => {
+              setStore(s => deleteRejectedReport(s, id))
+              setNotice(`Rejected report ${id} has been deleted from your submissions.`)
+            }}
+            onClearAllRejected={() => {
+              setStore(s => clearRejectedReports(s))
+              setNotice('All rejected reports have been cleared from your submissions.')
+            }}
+          />
+        )}
 
         {page === 'review' && mode === 'admin' && (
           <ReviewQueue

@@ -14,6 +14,7 @@ Implements:
 from __future__ import annotations
 
 from typing import Any, Dict, List, Tuple
+from urllib.parse import quote
 
 # Calibrated Municipal Weights (Guide Section 6.3 & AGENT_INTEGRATION_GUIDE.md Section 7)
 WEIGHT_PILE = 35.0
@@ -153,7 +154,7 @@ def fuse_dual_model_incident(
         f_score = calculate_hotspot_score(f_piles, f_groups, f_litter, f_potholes_by_sev)
         f_prio, _ = determine_priority_and_dispatch(f_score, f_piles > 0, f_has_high_pothole)
 
-        frame_url = f"{media_url_prefix}/{incident_id}/frames/{entry['file_name']}"
+        frame_url = f"{media_url_prefix}/{incident_id}/frames/{quote(str(entry['file_name']))}"
 
         frames_output.append({
             "frame_index": entry.get("frame_index", idx),
@@ -201,7 +202,7 @@ def fuse_dual_model_incident(
 
     source_media_out = dict(media_meta)
     if media_meta.get("filename"):
-        source_media_out["media_url"] = f"{media_url_prefix}/{incident_id}/source/{media_meta['filename']}"
+        source_media_out["media_url"] = f"{media_url_prefix}/{incident_id}/source/{quote(str(media_meta['filename']))}"
 
     return {
         "incident_id": incident_id,

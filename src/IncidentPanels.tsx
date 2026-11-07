@@ -389,6 +389,12 @@ function ImageLightboxModal({
   )
 }
 
+function safeMediaUrl(url?: string): string | undefined {
+  if (!url) return undefined
+  if (url.startsWith('data:') || url.startsWith('blob:')) return url
+  return url.replace(/#/g, '%23')
+}
+
 export function Evidence({
   report,
   showBoxes = true,
@@ -402,11 +408,13 @@ export function Evidence({
 }) {
   const [internalFrameIdx, setInternalFrameIdx] = useState(0)
   const [lightboxOpen, setLightboxOpen] = useState(false)
+  const [fallbackToReportPhoto, setFallbackToReportPhoto] = useState(false)
   const videoRef = useRef<HTMLVideoElement>(null)
 
   const selectedFrameIdx = controlledIdx !== undefined ? controlledIdx : internalFrameIdx
   const setSelectedFrameIdx = (idx: number) => {
     setInternalFrameIdx(idx)
+    setFallbackToReportPhoto(false)
     onSelectFrameIdx?.(idx)
   }
 
@@ -414,13 +422,19 @@ export function Evidence({
   const safeIdx = frames.length > 0 ? Math.min(selectedFrameIdx, frames.length - 1) : 0
   const activeFrame = frames.length > 0 ? frames[safeIdx] : null
 
-  const videoSrc =
+  const videoSrc = safeMediaUrl(
     report.videoUrl ||
-    (report.dualModelResult?.source_media?.type === 'video'
-      ? report.dualModelResult?.source_media?.media_url
-      : undefined)
+      (report.dualModelResult?.source_media?.type === 'video'
+        ? report.dualModelResult?.source_media?.media_url
+        : undefined),
+  )
 
-  const activePhoto = activeFrame?.frame_url || report.photo
+  const primaryFrameUrl = safeMediaUrl(activeFrame?.frame_url)
+  const fallbackPhotoUrl = safeMediaUrl(report.photo)
+  const activePhoto =
+    fallbackToReportPhoto && fallbackPhotoUrl
+      ? fallbackPhotoUrl
+      : primaryFrameUrl || fallbackPhotoUrl
   const activeRegions = activeFrame ? activeFrame.trash_findings?.region_list || [] : report.regions
   const activeDetections = activeFrame ? activeFrame.trash_findings?.detections || [] : report.detections
   const activeDefects = activeFrame ? activeFrame.road_defect_findings?.defects || [] : report.defects
@@ -503,6 +517,11 @@ export function Evidence({
             <img
               src={activePhoto}
               alt={`Submitted ${report.category.toLowerCase()} at ${report.location}`}
+              onError={() => {
+                if (!fallbackToReportPhoto && fallbackPhotoUrl && fallbackPhotoUrl !== activePhoto) {
+                  setFallbackToReportPhoto(true)
+                }
+              }}
               style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
             />
             {hasBoxes && (
@@ -560,7 +579,7 @@ export function Evidence({
                 className={`frame-thumb-card ${isSelected ? 'active' : ''}`}
                 onClick={() => handleSelectFrame(idx, frame.timestamp_sec)}
               >
-                <img src={frame.frame_url} alt={`Frame at ${frame.timestamp_sec.toFixed(1)}s`} />
+                <img src={safeMediaUrl(frame.frame_url)} alt={`Frame at ${frame.timestamp_sec.toFixed(1)}s`} />
                 <div className="frame-thumb-meta">
                   <strong>00:{String(Math.floor(frame.timestamp_sec)).padStart(2, '0')}</strong>
                   <span>{itemCount} det</span>
@@ -996,10 +1015,12 @@ function CitizenReportCard({
   report,
   store,
   showCitizenBoxes,
+  onDeleteRejected,
 }: {
   report: Observation
   store: Store
   showCitizenBoxes: boolean
+  onDeleteRejected?: (id: string) => void
 }) {
   const [selectedFrameIdx, setSelectedFrameIdx] = useState(0)
   const incident = store.incidents.find(i => i.id === report.incidentId)
@@ -1095,25 +1116,63 @@ function CitizenReportCard({
           )}
         </div>
         <div className="report-meta">
-          <Status value={report.review} />
-          {(!activeRegions || activeRegions.length === 0) &&
-            (!activeDefects || activeDefects.length === 0) && (
-              <small>
-                Automated Model Detection (v5.2): {report.category} · {report.confidence}% AI Confidence
-              </small>
-            )}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+            <Status value={report.review} />
+            {(!activeRegions || activeRegions.length === 0) &&
+              (!activeDefects || activeDefects.length === 0) && (
+                <small>
+                  Automated Model Detection (v5.2): {report.category} · {report.confidence}% AI Confidence
+                </small>
+              )}
+          </div>
+          {report.review === 'Rejected' && onDeleteRejected && (
+            <button
+              type="button"
+              className="button button-outline button-danger-outline button-sm"
+              onClick={() => onDeleteRejected(report.id)}
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.7"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M3 6h18" />
+                <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+              </svg>
+              Delete Rejected Report
+            </button>
+          )}
         </div>
       </div>
     </article>
   )
 }
 
-export function MyReports({ store }: { store: Store }) {
+export function MyReports({
+  store,
+  onDeleteRejected,
+  onClearAllRejected,
+}: {
+  store: Store
+  onDeleteRejected?: (id: string) => void
+  onClearAllRejected?: () => void
+}) {
   const [showCitizenBoxes, setShowCitizenBoxes] = useState(true)
   const [query, setQuery] = useState('')
   const [categoryFilter, setCategoryFilter] = useState('All categories')
   const [statusFilter, setStatusFilter] = useState('All statuses')
   const [dateRange, setDateRange] = useState('All time')
+
+  const rejectedCount = store.observations.filter(
+    o => o.reporter === residentId && o.review === 'Rejected',
+  ).length
 
   const reports = store.observations
     .filter(o => o.reporter === residentId)
@@ -1146,14 +1205,25 @@ export function MyReports({ store }: { store: Store }) {
         totalCount={reports.length}
         countLabel="citizen reports"
         extraToggle={
-          <label className="citizen-box-toggle">
-            <input
-              type="checkbox"
-              checked={showCitizenBoxes}
-              onChange={e => setShowCitizenBoxes(e.target.checked)}
-            />
-            <span>Show AI Detection Highlights</span>
-          </label>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+            {rejectedCount > 0 && onClearAllRejected && (
+              <button
+                type="button"
+                className="button button-outline button-danger-outline button-sm"
+                onClick={onClearAllRejected}
+              >
+                Clear All Rejected ({rejectedCount})
+              </button>
+            )}
+            <label className="citizen-box-toggle">
+              <input
+                type="checkbox"
+                checked={showCitizenBoxes}
+                onChange={e => setShowCitizenBoxes(e.target.checked)}
+              />
+              <span>Show AI Detection Highlights</span>
+            </label>
+          </div>
         }
       />
 
@@ -1164,6 +1234,7 @@ export function MyReports({ store }: { store: Store }) {
             report={report}
             store={store}
             showCitizenBoxes={showCitizenBoxes}
+            onDeleteRejected={onDeleteRejected}
           />
         ))}
         {!reports.length && (

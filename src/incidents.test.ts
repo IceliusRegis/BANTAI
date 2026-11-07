@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { seedStore, addResidentReport, reviewReport, updateIncident, rankIncidents, rankHotspots, addVideoObservations } from './incidents.ts'
+import { seedStore, addResidentReport, reviewReport, updateIncident, rankIncidents, rankHotspots, addVideoObservations, deleteRejectedReport, clearRejectedReports } from './incidents.ts'
 
 test('user submission, duplicate consolidation, status update and resolved rankings', () => {
   const now = '2026-10-13T04:00:00.000Z'
@@ -32,6 +32,11 @@ test('ties use recency, rejected and video observations wait for validation', ()
   store = reviewReport(store, 'VID-test-1', 'reject', undefined, 'Not enough evidence', now, 'unused')
   assert.equal(store.observations.find(o => o.id === 'VID-test-1')?.review, 'Rejected')
   assert.deepEqual(rankIncidents(store).map(i => i.frequency), frequencies)
+  // Pending reports cannot be deleted via deleteRejectedReport
+  assert.equal(deleteRejectedReport(store, 'VID-test-2'), store)
+  // Rejected report can be deleted
+  store = deleteRejectedReport(store, 'VID-test-1')
+  assert.equal(store.observations.find(o => o.id === 'VID-test-1'), undefined)
 })
 
 test('different categories cannot be consolidated and new incidents can be created', () => {
