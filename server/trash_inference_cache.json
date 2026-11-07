@@ -1434,5 +1434,256 @@
         "garbage_pile_count": 0
       }
     }
+  },
+  "b925b267b5d5a377817cc0e79c76224f6a8af0a5b30152d58f74dcb604374c36": {
+    "detections": [
+      {
+        "image_id": 10000,
+        "query_id": 0,
+        "category_id": 4,
+        "score": 0.3691193163394928,
+        "bbox": [
+          95.5907866358757,
+          84.40634191036224,
+          186.32917284965515,
+          114.62464451789856
+        ],
+        "raw_phrase": "plastic bottle plastic bag plastic wrapper plastic film drink cup styrofoam piece paper",
+        "valid_clipped_box": true,
+        "raw_category_id": 8,
+        "specific_category_id": 4,
+        "consensus_reassigned": true,
+        "consensus_rule1b": true,
+        "consensus_original_score": 0.3691193163394928,
+        "consensus_plastic_max_score": 0.34007805585861206,
+        "specific_class": "plastic_film",
+        "material": "plastic",
+        "hazard_flag": false,
+        "bantai_category": "Plastic",
+        "bantai_category_id": 0,
+        "bantai_color": "#4363d8",
+        "mapped_category": "plastic_film",
+        "taxonomy_scheme": "9-specific",
+        "display_label": "plastic_film"
+      }
+    ],
+    "grouping": {
+      "annotated_rows": [
+        {
+          "image_id": 10000,
+          "query_id": 0,
+          "category_id": 4,
+          "score": 0.3691193163394928,
+          "bbox": [
+            95.5907866358757,
+            84.40634191036224,
+            186.32917284965515,
+            114.62464451789856
+          ],
+          "raw_phrase": "plastic bottle plastic bag plastic wrapper plastic film drink cup styrofoam piece paper",
+          "valid_clipped_box": true,
+          "raw_category_id": 8,
+          "specific_category_id": 4,
+          "consensus_reassigned": true,
+          "consensus_rule1b": true,
+          "consensus_original_score": 0.3691193163394928,
+          "consensus_plastic_max_score": 0.34007805585861206,
+          "specific_class": "plastic_film",
+          "material": "plastic",
+          "hazard_flag": false,
+          "bantai_category": "Plastic",
+          "bantai_category_id": 0,
+          "bantai_color": "#4363d8",
+          "mapped_category": "plastic_film",
+          "taxonomy_scheme": "9-specific",
+          "display_label": "plastic_film",
+          "spatial_group_id": 0,
+          "spatial_category": "individual_litter",
+          "spatial_label": "Individual Litter"
+        }
+      ],
+      "regions": [
+        {
+          "group_id": 0,
+          "category": "individual_litter",
+          "label": "Individual Litter",
+          "bbox": [
+            95.5907866358757,
+            84.40634191036224,
+            186.32917284965515,
+            114.62464451789856
+          ],
+          "item_count": 1,
+          "model_score": 0.3691193163394928,
+          "member_indices": [
+            0
+          ],
+          "members": [
+            0
+          ],
+          "packing_density": 1.0,
+          "touching_pairs": 0,
+          "max_iou": 0.0
+        }
+      ],
+      "summary": {
+        "total_physical_items": 1,
+        "total_regions": 1,
+        "individual_litter_count": 1,
+        "group_of_individual_litter_count": 0,
+        "garbage_pile_count": 0
+      }
+    }
+  },
+  "3f0a9933da9d1ea58083b27d8bc8e62d9e662bbc51e65ce975c8ff385aa6c381": {
+    "detections": [
+      {
+        "image_id": 10000,
+        "query_id": 0,
+        "category_id": 4,
+        "score": 0.3823995292186737,
+        "bbox": [
+          1192.8492486476898,
+          1603.3439636230469,
+          669.6869730949402,
+          576.4172077178955
+        ],
+        "raw_phrase": "cigarette plastic bottle plastic bag plastic wrapper plastic film plastic cup styrofoam piece paper",
+        "valid_clipped_box": true,
+        "raw_category_id": 8,
+        "specific_category_id": 4,
+        "consensus_reassigned": true,
+        "consensus_original_score": 0.3823995292186737,
+        "consensus_plastic_max_score": 0.3719235062599182,
+        "specific_class": "plastic_film",
+        "material": "plastic",
+        "hazard_flag": false,
+        "bantai_category": "Plastic",
+        "bantai_category_id": 0,
+        "bantai_color": "#4363d8",
+        "mapped_category": "plastic_film",
+        "taxonomy_scheme": "9-specific",
+        "display_label": "plastic_film"
+      },
+      {
+        "image_id": 10000,
+        "query_id": 2,
+        "category_id": 0,
+        "score": 0.251934677362442,
+        "bbox": [
+          2523.4040915966034,
+          2787.4553985893726,
+          201.24775171279907,
+          68.92093271017075
+        ],
+        "raw_phrase": "cigarette plastic bottle drink can paper",
+        "valid_clipped_box": true,
+        "specific_category_id": 0,
+        "specific_class": "cigarette",
+        "material": "cellulose_acetate_filter",
+        "hazard_flag": true,
+        "bantai_category": "Potentially Hazardous",
+        "bantai_category_id": 4,
+        "bantai_color": "#e6194B",
+        "mapped_category": "cigarette",
+        "taxonomy_scheme": "9-specific",
+        "display_label": "cigarette"
+      }
+    ],
+    "grouping": {
+      "annotated_rows": [
+        {
+          "image_id": 10000,
+          "query_id": 0,
+          "category_id": 4,
+          "score": 0.3823995292186737,
+          "bbox": [
+            1192.8492486476898,
+            1603.3439636230469,
+            669.6869730949402,
+            576.4172077178955
+          ],
+          "raw_phrase": "cigarette plastic bottle plastic bag plastic wrapper plastic film plastic cup styrofoam piece paper",
+          "valid_clipped_box": true,
+          "raw_category_id": 8,
+          "specific_category_id": 4,
+          "consensus_reassigned": true,
+          "consensus_original_score": 0.3823995292186737,
+          "consensus_plastic_max_score": 0.3719235062599182,
+          "specific_class": "plastic_film",
+          "material": "plastic",
+          "hazard_flag": false,
+          "bantai_category": "Plastic",
+          "bantai_category_id": 0,
+          "bantai_color": "#4363d8",
+          "mapped_category": "plastic_film",
+          "taxonomy_scheme": "9-specific",
+          "display_label": "plastic_film",
+          "spatial_group_id": 0,
+          "spatial_category": "group_of_individual_litter",
+          "spatial_label": "Group of Individual Litter"
+        },
+        {
+          "image_id": 10000,
+          "query_id": 2,
+          "category_id": 0,
+          "score": 0.251934677362442,
+          "bbox": [
+            2523.4040915966034,
+            2787.4553985893726,
+            201.24775171279907,
+            68.92093271017075
+          ],
+          "raw_phrase": "cigarette plastic bottle drink can paper",
+          "valid_clipped_box": true,
+          "specific_category_id": 0,
+          "specific_class": "cigarette",
+          "material": "cellulose_acetate_filter",
+          "hazard_flag": true,
+          "bantai_category": "Potentially Hazardous",
+          "bantai_category_id": 4,
+          "bantai_color": "#e6194B",
+          "mapped_category": "cigarette",
+          "taxonomy_scheme": "9-specific",
+          "display_label": "cigarette",
+          "spatial_group_id": 0,
+          "spatial_category": "group_of_individual_litter",
+          "spatial_label": "Group of Individual Litter"
+        }
+      ],
+      "regions": [
+        {
+          "group_id": 0,
+          "category": "group_of_individual_litter",
+          "label": "Group of Individual Litter",
+          "bbox": [
+            1192.8492486476898,
+            1603.3439636230469,
+            1531.8025946617126,
+            1253.0323676764965
+          ],
+          "item_count": 2,
+          "model_score": null,
+          "member_indices": [
+            0,
+            1
+          ],
+          "members": [
+            0,
+            1
+          ],
+          "packing_density": 0.20834096393493817,
+          "touching_pairs": 0,
+          "max_iou": 0.0
+        }
+      ],
+      "summary": {
+        "total_physical_items": 2,
+        "total_regions": 1,
+        "individual_litter_count": 0,
+        "group_of_individual_litter_count": 1,
+        "garbage_pile_count": 0
+      }
+    }
   }
 }
