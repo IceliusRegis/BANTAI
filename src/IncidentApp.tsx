@@ -17,7 +17,7 @@ export default function IncidentApp() {
   const hotspots = rankHotspots(store)
   return <div className="app-shell workflow">
     <header className="site-header"><div className="page-width header-top">
-      <div><div className="brand-name">BARANGAY <span>INCIDENT MONITOR</span></div><div className="brand-subtitle">ENVIRONMENT & ROAD INFRASTRUCTURE</div></div>
+      <div><div className="brand-name">BANTAI <span>INCIDENT MONITOR</span></div><div className="brand-subtitle">ENVIRONMENT & ROAD INFRASTRUCTURE</div></div>
       <div className="header-right"><button aria-pressed={mode === 'user'} className={`button ${mode === 'user' ? 'button-primary' : 'button-outline'}`} onClick={() => switchMode('user')}>Regular user</button><button aria-pressed={mode === 'admin'} className={`button ${mode === 'admin' ? 'button-primary' : 'button-outline'}`} onClick={() => switchMode('admin')}>Admin</button></div>
     </div><nav className="nav-bar" aria-label="Main navigation"><div className="page-width nav-inner">{navigation.map(([key, label]) => <button key={key} className={`nav-item ${page === key ? 'active' : ''}`} aria-current={page === key ? 'page' : undefined} onClick={() => { setPage(key); setNotice('') }}>{label}</button>)}</div></nav></header>
     <main className="page-width main-content">
@@ -30,7 +30,7 @@ export default function IncidentApp() {
       {page === 'mine' && mode === 'user' && <MyReports store={store} />}
       {page === 'review' && mode === 'admin' && <ReviewQueue store={store} onReview={(id, decision, target, note) => { setStore(s => reviewReport(s, id, decision, target, note, new Date().toISOString(), `INC-${crypto.randomUUID().slice(0, 8).toUpperCase()}`)); setNotice(decision === 'reject' ? 'Report rejected. The reporter can see your explanation.' : 'Report validated. Incident frequency and hotspot rankings updated.') }} />}
       {page === 'incidents' && mode === 'admin' && <Incidents store={store} onUpdate={(id, status, note) => { setStore(s => updateIncident(s, id, status, note, new Date().toISOString())); setNotice(`${id} updated to ${status}. Switch to Regular user to see the update.`) }} />}
-      {page === 'video' && mode === 'admin' && <VideoMonitor onGenerate={(location, category) => { setStore(s => addVideoObservations(s, location, category, new Date().toISOString(), crypto.randomUUID().slice(0, 6))); setNotice('Three video observations added to the review queue.') }} onReview={() => setPage('review')} />}
+      {page === 'video' && mode === 'admin' && <VideoMonitor onGenerate={(location, category) => { setStore(s => addVideoObservations(s, location, category, new Date().toISOString(), crypto.randomUUID().slice(0, 6))); setNotice('Three video observations added to the review queue.') }} onAddRealObservations={newObs => { setStore(s => ({ ...s, observations: [...newObs, ...s.observations] })); setNotice(`${newObs.length} single-pass video frame observations added to the review queue with dual-model findings.`); setPage('review') }} onReview={() => setPage('review')} />}
       {page === 'overview' && <>
       <div className="overview-action"><button className="button button-primary" onClick={() => setPage(mode === 'admin' ? 'review' : 'submit')}>{mode === 'admin' ? `Review ${pending} submissions` : '+ Submit a report'}</button></div>
       <div className="summary-grid">

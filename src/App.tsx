@@ -65,7 +65,7 @@ function Header({ view, navigate }: { view: View; navigate: (view: View) => void
     <div className="header-top page-width">
       <div className="brand">
         <div className="brand-mark" aria-hidden="true"><span className="brand-mark-top" /><span className="brand-mark-bottom" /></div>
-        <div className="brand-copy"><div className="brand-name">DUMPING HOTSPOT <span>DETECTION</span></div><div className="brand-subtitle">& PRIORITIZATION AGENT</div></div>
+        <div className="brand-copy"><div className="brand-name">BANTAI <span>HOTSPOT DETECTION</span></div><div className="brand-subtitle">& PRIORITIZATION AGENT</div></div>
       </div>
       <div className="header-right"><span className="pilot-pill"><span className="pilot-dot" /> PILOT BARANGAY</span><span className="header-location">Santa Elena, Marikina City</span><div className="header-avatar" aria-label="Barangay operations user">BO</div></div>
     </div>

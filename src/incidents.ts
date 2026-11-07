@@ -3,12 +3,120 @@ export type Category = typeof categories[number]
 export const locations = ['J. P. Rizal St. near Market', 'Shoe Avenue corner E. Dela Paz', 'P. Burgos St. riverside', 'Marikina Bridge approach']
 export const incidentStatuses = ['Open', 'For inspection', 'In progress', 'Resolved'] as const
 export type IncidentStatus = typeof incidentStatuses[number]
+
+export type TrashDetection = {
+  detection_id: number
+  category_id: number
+  label: string
+  bantai_category: string
+  model_score: number
+  bbox: [number, number, number, number]
+}
+
+export type TrashRegion = {
+  region_id: number
+  category: 'individual_litter' | 'group_of_individual_litter' | 'garbage_pile'
+  display_label: string
+  item_count: number
+  bbox: [number, number, number, number]
+  model_score: number | null
+  member_indices: number[]
+  category_breakdown?: Record<string, number>
+}
+
+export type TrashFindings = {
+  model_version: string
+  total_items: number
+  regions: {
+    garbage_piles: number
+    groups_of_litter: number
+    individual_items: number
+  }
+  items_by_bantai_category: Record<string, number>
+  region_list: TrashRegion[]
+  detections?: TrashDetection[]
+}
+
+export type RoadDefect = {
+  defect_id: number
+  type: 'pothole'
+  severity: 'low' | 'moderate' | 'high'
+  estimated_diameter_cm: number
+  bbox: [number, number, number, number]
+  confidence: number
+}
+
+export type RoadDefectFindings = {
+  model_version: string
+  total_defects: number
+  defects: RoadDefect[]
+}
+
+export type DualModelFrameResult = {
+  frame_index: number
+  timestamp_sec: number
+  frame_url: string
+  width?: number
+  height?: number
+  trash_findings: TrashFindings
+  road_defect_findings: RoadDefectFindings
+}
+
+export type UnifiedIncidentResponse = {
+  incident_id: string
+  source_media: {
+    filename: string
+    type: 'video' | 'image'
+    fps?: number
+    duration_sec?: number
+  }
+  location: {
+    street_name: string
+    latitude: number
+    longitude: number
+  }
+  hotspot_score: number
+  priority_level: 'CRITICAL' | 'ELEVATED' | 'ROUTINE'
+  dispatch_recommendation: string
+  summary?: {
+    total_frames: number
+    total_garbage_piles: number
+    total_litter_groups: number
+    total_individual_litter: number
+    total_potholes: number
+  }
+  frames: DualModelFrameResult[]
+}
+
 export type Observation = {
   id: string; reporter: string; source: 'Resident photo' | 'Video observation'; location: string;
   category: Category; observedAt: string; submittedAt: string; description: string;
   photo?: string; clipTime?: string; confidence: number;
   review: 'Pending review' | 'Validated' | 'Rejected'; incidentId?: string; reviewNote: string;
+  dualModelResult?: UnifiedIncidentResponse;
+  regions?: TrashRegion[];
+  defects?: RoadDefect[];
+  hotspotScore?: number;
+  priorityLevel?: 'CRITICAL' | 'ELEVATED' | 'ROUTINE';
 }
+
+export function computeHotspotScore(
+  piles: number,
+  groups: number,
+  litter: number,
+  potholesBySeverity: { low?: number; moderate?: number; high?: number } = {},
+): number {
+  const W_pile = 35.0
+  const W_group = 15.0
+  const W_litter = 3.0
+  const W_pothole: Record<string, number> = { low: 25.0, moderate: 32.5, high: 40.0 }
+  let score = piles * W_pile + groups * W_group + litter * W_litter
+  for (const [sev, count] of Object.entries(potholesBySeverity)) {
+    score += (count || 0) * (W_pothole[sev] || 30.0)
+  }
+  return Math.min(100.0, Math.max(0.0, Math.round(score * 10) / 10))
+}
+
 export type Incident = { id: string; category: Category; location: string; status: IncidentStatus; note: string; updatedAt: string }
 export type Store = { observations: Observation[]; incidents: Incident[] }
 export type RankedIncident = Incident & { frequency: number; latest: string }

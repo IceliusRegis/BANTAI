@@ -38,3 +38,14 @@ Desktop.ini
 .idea/
 *.swp
 *.swo
+
+# AI models, weights, and temporary media extraction
+runs/
+extracted_frames/
+server/media_storage/
+__pycache__/
+*.pyc
+*.safetensors
+*.pth
+*.pt
+
