@@ -975,6 +975,19 @@ def _box_iomin(a, b):
     return inter / min_area
 
 
+def estimate_pothole_severity(box, img_width, img_height, score):
+    '''Assign BANTAI Severity Level (Low, Moderate, Critical) based on surface area and score.'''
+    bw = max(1.0, box[2] - box[0])
+    bh = max(1.0, box[3] - box[1])
+    area_ratio = (bw * bh) / float(max(1, img_width * img_height))
+    if area_ratio >= 0.035 or (area_ratio >= 0.02 and score >= 0.85):
+        return "Critical"
+    elif area_ratio >= 0.01 or (area_ratio >= 0.005 and score >= 0.70):
+        return "Moderate"
+    else:
+        return "Low"
+
+
 def _is_roadside_litter_or_leaf(rgb_arr, box, score):
     '''Reject colorful roadside trash wrappers, plastic cups, or dry leaves in curb gutters.'''
     h, w, _ = rgb_arr.shape
@@ -1287,13 +1300,20 @@ def smart_pothole_detect(pil_img, conf_threshold=0.20, is_video_stream=False, re
 
     # 1. Full-Frame pass
     full_dets = detector.detect(pil_img, mode="video", confidence=conf_threshold)
+    strong_full_craters = [d for d in full_dets if float(d.get("score", 0.0)) >= 0.42]
 
     # 2. Road pass:
     if is_video_stream:
         # Fast Lower-Road Crop (doubles effective road resolution on driving/walking video frames)
         road_y0 = int(h * 0.30)
         road_crop = pil_img.crop((0, road_y0, w, h))
-        road_raw = detector.detect(road_crop, mode="video", confidence=max(0.18, conf_threshold * 0.90))
+        road_conf = max(0.18, conf_threshold * 0.85)
+        if hasattr(detector, "_predict_raw"):
+            road_raw = detector._predict_raw(road_crop, road_conf)
+        elif hasattr(detector, "_raw_predict"):
+            road_raw = detector._raw_predict(road_crop, road_conf)
+        else:
+            road_raw = detector.detect(road_crop, mode="video", confidence=road_conf)
         road_dets = []
         for rd in road_raw:
             rx1, ry1, rx2, ry2 = rd["xyxy"]
@@ -1340,7 +1360,7 @@ def smart_pothole_detect(pil_img, conf_threshold=0.20, is_video_stream=False, re
             continue
 
         # 3B. Micro-Speck / Survey-Bolt / Lane-Dot Gate & Smooth Flush Utility-Patch Gate (non-cabin road views)
-        if not is_cabin_dashcam:
+        if not is_cabin_dashcam and not is_video_stream:
             if area_ratio < 0.0022:
                 continue
             if area_ratio < 0.015 and score < 0.27:
@@ -1375,8 +1395,8 @@ def smart_pothole_detect(pil_img, conf_threshold=0.20, is_video_stream=False, re
         kept.append(dict(d))
 
     # Poison-Pill Manhole Overlap Suppression:
-    # If any candidate box was rejected as a manhole cover, suppress all overlapping sub-boxes / collar boxes on that same manhole!
-    if rejected_manhole_boxes:
+    # If any candidate box was rejected as a manhole cover on still photos, suppress all overlapping sub-boxes / collar boxes on that same manhole!
+    if rejected_manhole_boxes and not is_video_stream:
         clean_kept = []
         for cand in kept:
             cb = cand["xyxy"]
@@ -1401,7 +1421,7 @@ def smart_pothole_detect(pil_img, conf_threshold=0.20, is_video_stream=False, re
     return merged
 
 
-def _box_perspective_similarity(track_box, det_box, max_scale=3.2):
+def _box_perspective_similarity(track_box, det_box, max_scale=3.5):
     '''Calculate scale-expansion & perspective-aware similarity for forward-moving video cameras.'''
     tx1, ty1, tx2, ty2 = track_box
     dx1, dy1, dx2, dy2 = det_box
@@ -1414,11 +1434,12 @@ def _box_perspective_similarity(track_box, det_box, max_scale=3.2):
     iomin = _box_iomin(track_box, det_box)
 
     x_dist = abs(tcx - dcx) / max(tw, dw)
-    y_dist = abs(tcy - dcy) / max(th, dh)
+    y_dist = (dcy - tcy) / max(th, dh)
     scale_ratio = max(dw * dh, tw * th) / max(1.0, min(dw * dh, tw * th))
 
-    if x_dist <= 0.42 and y_dist <= 0.85 and scale_ratio <= max_scale:
-        persp_score = 1.0 - (0.45 * x_dist + 0.35 * y_dist + 0.20 * (scale_ratio - 1.0) / max_scale)
+    # Potholes in driving/walking video drift downward (-0.40 <= y_dist <= 1.35) and stay horizontally aligned (x_dist <= 0.48)
+    if x_dist <= 0.48 and -0.40 <= y_dist <= 1.35 and scale_ratio <= max_scale:
+        persp_score = 1.0 - (0.38 * x_dist + 0.28 * abs(y_dist) + 0.14 * (scale_ratio - 1.0) / max_scale)
         return max(iou, max(iomin, persp_score))
     return max(iou, iomin)
 
@@ -1426,7 +1447,7 @@ def _box_perspective_similarity(track_box, det_box, max_scale=3.2):
 class SmoothIoUVideoTracker:
     '''IoU + DBSCAN Single-Crater Video Tracker with Velocity-Predicted Motion Tracking & ByteTrack Continuation.'''
 
-    def __init__(self, iou_threshold=0.20, min_hits=2, max_age=8, alpha=0.85):
+    def __init__(self, iou_threshold=0.18, min_hits=2, max_age=15, alpha=0.82):
         self.iou_threshold = iou_threshold
         self.min_hits = min_hits
         self.max_age = max_age
@@ -1438,6 +1459,9 @@ class SmoothIoUVideoTracker:
     def update(self, detections, rejected_manholes=None):
         if rejected_manholes:
             for mh_box in rejected_manholes:
+                # NEVER blacklist an area that already matches an active pothole track!
+                if any(_box_iou(mh_box, t["xyxy"]) >= 0.15 or _box_iomin(mh_box, t["xyxy"]) >= 0.25 for t in self.tracks if t["hits"] >= 2 or t.get("peak_score", 0.0) >= 0.35):
+                    continue
                 matched_mh = False
                 for bz in self.blacklisted_manholes:
                     if _box_iou(mh_box, bz["xyxy"]) >= 0.15 or _box_iomin(mh_box, bz["xyxy"]) >= 0.30:
@@ -1451,38 +1475,40 @@ class SmoothIoUVideoTracker:
 
         for bz in self.blacklisted_manholes:
             bz["age"] += 1
-            # Downward ego-motion drift compensation as vehicle/camera moves forward toward the manhole
             bh = max(4.0, bz["xyxy"][3] - bz["xyxy"][1])
             bz["xyxy"][1] += bh * 0.04
             bz["xyxy"][3] += bh * 0.05
-        self.blacklisted_manholes = [bz for bz in self.blacklisted_manholes if bz["age"] <= 10]
+        # Only keep blacklisted manholes if they were confirmed across at least 2 frames and age <= 8
+        self.blacklisted_manholes = [bz for bz in self.blacklisted_manholes if bz["age"] <= 8 and bz["hits"] >= 2]
 
         # Suppress any candidate detection that lands on a tracked/blacklisted manhole trajectory
         if self.blacklisted_manholes and detections:
             filtered_dets = []
             for d in detections:
                 db = d["xyxy"]
-                if any(_box_iomin(db, bz["xyxy"]) >= 0.32 or _box_iou(db, bz["xyxy"]) >= 0.20 for bz in self.blacklisted_manholes):
+                if any(_box_iomin(db, bz["xyxy"]) >= 0.35 or _box_iou(db, bz["xyxy"]) >= 0.22 for bz in self.blacklisted_manholes):
                     continue
                 filtered_dets.append(d)
             detections = filtered_dets
 
         detections = dbscan_single_crater_fusion(detections)
 
-        # 1. Update existing tracks: predict forward position via velocity
+        # 1. Update existing tracks: predict forward position via velocity + perspective expansion
         for t in self.tracks:
             t["time_since_update"] += 1
             vx, vy = t.get("vel", [0.0, 0.0])
+            grow_y = max(0.0, vy) * 0.12
+            grow_x = max(0.0, vy) * 0.08
             t["pred_box"] = [
-                t["xyxy"][0] + 0.85 * vx,
-                t["xyxy"][1] + 0.85 * vy,
-                t["xyxy"][2] + 0.85 * vx,
-                t["xyxy"][3] + 0.85 * vy,
+                t["xyxy"][0] + 0.90 * vx - grow_x,
+                t["xyxy"][1] + 0.90 * vy - grow_y * 0.2,
+                t["xyxy"][2] + 0.90 * vx + grow_x,
+                t["xyxy"][3] + 0.90 * vy + grow_y,
             ]
 
-        # 2. Split detections into high-conf (>=0.30) and low-conf (0.18..0.30)
-        high_dets = [d for d in detections if float(d.get("score", 0.0)) >= 0.30]
-        low_dets = [d for d in detections if 0.18 <= float(d.get("score", 0.0)) < 0.30]
+        # 2. Split detections into high-conf (>=0.28) and low-conf (0.16..0.28)
+        high_dets = [d for d in detections if float(d.get("score", 0.0)) >= 0.28]
+        low_dets = [d for d in detections if 0.16 <= float(d.get("score", 0.0)) < 0.28]
 
         matched_tracks = set()
         matched_high_dets = set()
@@ -1503,18 +1529,18 @@ class SmoothIoUVideoTracker:
                 matched_high_dets.add(d_idx)
                 self._apply_match(self.tracks[t_idx], high_dets[d_idx])
 
-        # Stage 2: Match low-confidence detections (0.18..0.30) to remaining confirmed tracks
+        # Stage 2: Match low-confidence detections (0.16..0.28) to remaining tracks
         matched_low_dets = set()
         remaining_confirmed = [
             (idx, t) for idx, t in enumerate(self.tracks)
-            if idx not in matched_tracks and (t["hits"] >= self.min_hits or t.get("peak_score", 0.0) >= 0.35)
+            if idx not in matched_tracks and (t["hits"] >= self.min_hits or t.get("peak_score", 0.0) >= 0.30)
         ]
         if remaining_confirmed and low_dets:
             pairs = []
             for t_idx, track in remaining_confirmed:
                 for d_idx, det in enumerate(low_dets):
                     sim = _box_perspective_similarity(track["pred_box"], det["xyxy"])
-                    if sim >= (self.iou_threshold * 0.80):
+                    if sim >= (self.iou_threshold * 0.75):
                         pairs.append((sim, t_idx, d_idx))
             pairs.sort(key=lambda x: x[0], reverse=True)
             for _, t_idx, d_idx in pairs:
@@ -1529,17 +1555,26 @@ class SmoothIoUVideoTracker:
             if t_idx not in matched_tracks:
                 vx, vy = track.get("vel", [0.0, 0.0])
                 track["xyxy"] = list(track["pred_box"])
-                track["vel"] = [0.82 * vx, 0.82 * vy]
-                track["score"] = max(0.15, track["score"] * 0.90)
+                track["vel"] = [0.90 * vx, 0.90 * vy]
+                track["score"] = max(0.18, track["score"] * 0.94)
 
-        # Create new candidate tracks from unmatched detections (starts early down to 0.26)
+        # Create new candidate tracks from ALL unmatched detections with score >= 0.22
+        all_unmatched = []
         for d_idx, det in enumerate(high_dets):
-            if d_idx not in matched_high_dets and float(det.get("score", 0.0)) >= 0.26:
+            if d_idx not in matched_high_dets:
+                all_unmatched.append(det)
+        for d_idx, det in enumerate(low_dets):
+            if d_idx not in matched_low_dets:
+                all_unmatched.append(det)
+
+        for det in all_unmatched:
+            det_sc = float(det.get("score", 0.0))
+            if det_sc >= 0.22:
                 self.tracks.append({
                     "id": self.next_id,
                     "xyxy": list(det["xyxy"]),
-                    "score": float(det["score"]),
-                    "peak_score": float(det["score"]),
+                    "score": det_sc,
+                    "peak_score": det_sc,
                     "severity": det.get("severity", "Moderate"),
                     "hits": 1,
                     "time_since_update": 0,
@@ -1551,22 +1586,25 @@ class SmoothIoUVideoTracker:
 
         active = []
         for t in self.tracks:
-            is_confirmed = (t["hits"] >= self.min_hits and t["peak_score"] >= 0.28) or t.get("peak_score", 0.0) >= 0.38
-            if is_confirmed and t["time_since_update"] <= 6:
+            # Confirmed if hits >= 2 or single hit with score >= 0.38
+            is_confirmed = (t["hits"] >= self.min_hits and t["peak_score"] >= 0.24) or t.get("peak_score", 0.0) >= 0.38
+            if is_confirmed and t["time_since_update"] <= 12:
                 active.append({
                     "id": t["id"],
                     "xyxy": [round(v, 2) for v in t["xyxy"]],
                     "score": round(t["score"], 3),
                     "severity": t["severity"],
                     "class_name": "pothole",
+                    "coasting": t["time_since_update"] > 0,
                 })
-            elif t["time_since_update"] == 0 and t["score"] >= 0.45:
+            elif t["time_since_update"] == 0 and t["score"] >= 0.35:
                 active.append({
                     "id": t["id"],
                     "xyxy": [round(v, 2) for v in t["xyxy"]],
                     "score": round(t["score"], 3),
                     "severity": t["severity"],
                     "class_name": "pothole",
+                    "coasting": False,
                 })
         return dbscan_single_crater_fusion(active)
 
@@ -1580,9 +1618,9 @@ class SmoothIoUVideoTracker:
         measured_vx = (nx1 - ox1 + nx2 - ox2) * 0.5
         measured_vy = (ny1 - oy1 + ny2 - oy2) * 0.5
         old_vx, old_vy = track.get("vel", [0.0, 0.0])
-        track["vel"] = [0.70 * measured_vx + 0.30 * old_vx, 0.70 * measured_vy + 0.30 * old_vy]
+        track["vel"] = [0.65 * measured_vx + 0.35 * old_vx, 0.65 * measured_vy + 0.35 * old_vy]
         track["xyxy"] = [nx1, ny1, nx2, ny2]
-        track["score"] = 0.70 * float(det["score"]) + 0.30 * float(track["score"])
+        track["score"] = 0.75 * float(det["score"]) + 0.25 * float(track["score"])
         track["peak_score"] = max(float(track.get("peak_score", 0.0)), float(det["score"]))
         track["severity"] = det.get("severity", track.get("severity", "Moderate"))
         track["hits"] += 1
@@ -1609,7 +1647,7 @@ def process_uploaded_video(vname, vbytes, conf_threshold=0.20):
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     out = cv2.VideoWriter(str(out_path), fourcc, fps, (width, height))
 
-    tracker = SmoothIoUVideoTracker(iou_threshold=0.20, min_hits=2, max_age=6, alpha=0.85)
+    tracker = SmoothIoUVideoTracker(iou_threshold=0.18, min_hits=2, max_age=15, alpha=0.82)
     frame_idx = 0
     best_preview_pil = None
     best_preview_score_sum = -1.0

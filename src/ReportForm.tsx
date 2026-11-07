@@ -92,6 +92,7 @@ export default function ReportForm({ onSubmit }: { onSubmit: (report: ReportSubm
     let defects: RoadDefect[] | undefined = undefined
     let hotspotScore: number | undefined = undefined
     let priorityLevel: 'CRITICAL' | 'ELEVATED' | 'ROUTINE' | undefined = undefined
+    let primaryPhoto = photo
 
     // Attempt live API dual-model analysis if a real file was uploaded
     if (selectedFile) {
@@ -116,6 +117,9 @@ export default function ReportForm({ onSubmit }: { onSubmit: (report: ReportSubm
           if (data.frames && data.frames.length > 0) {
             regions = data.frames[0].trash_findings?.region_list || []
             defects = data.frames[0].road_defect_findings?.defects || []
+            if (!primaryPhoto && data.frames[0].frame_url) {
+              primaryPhoto = data.frames[0].frame_url
+            }
           }
         }
       } catch {
@@ -131,7 +135,7 @@ export default function ReportForm({ onSubmit }: { onSubmit: (report: ReportSubm
       location: place,
       observedAt: observed.toISOString(),
       description: description.trim(),
-      photo: photo || undefined,
+      photo: primaryPhoto || undefined,
       dualModelResult,
       regions,
       defects,
