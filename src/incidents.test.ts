@@ -6,7 +6,7 @@ test('user submission, duplicate consolidation, status update and resolved ranki
   const now = '2026-10-13T04:00:00.000Z'
   let store = seedStore(new Date(now))
   const before = rankIncidents(store)[0].frequency
-  store = addResidentReport(store, { category: 'Trash', location: 'J. P. Rizal St. near Market', observedAt: now, description: 'Demo report' }, 'TEST-1', now)
+  store = addResidentReport(store, { category: 'Trash', location: 'J. P. Rizal St. near Market', observedAt: now, description: 'Citizen field report' }, 'TEST-1', now)
   assert.equal(rankIncidents(store)[0].frequency, before)
   store = reviewReport(store, 'TEST-1', 'validate', 'INC-001', 'Same physical issue', now, 'NEW-1')
   assert.equal(store.incidents.length, 4)
@@ -43,4 +43,7 @@ test('different categories cannot be consolidated and new incidents can be creat
   assert.equal(store.incidents.length, 5)
   assert.equal(store.observations.find(o => o.id === 'TEST-2')?.incidentId, 'NEW')
   assert.equal(rankHotspots(store)[0].incidents, 2)
+  assert.equal(rankHotspots(store)[0].primaryIssue, 'Dual-Hazard Zone')
+  assert.equal(rankHotspots(store, 'Trash').every(h => h.trashIncidents > 0), true)
+  assert.equal(rankHotspots(store, 'Pothole').every(h => h.potholeIncidents > 0), true)
 })

@@ -1,6 +1,11 @@
 export const categories = ['Trash', 'Pothole'] as const
 export type Category = typeof categories[number]
-export const locations = ['J. P. Rizal St. near Market', 'Shoe Avenue corner E. Dela Paz', 'P. Burgos St. riverside', 'Marikina Bridge approach']
+export const locations = [
+  'J. P. Rizal St. near Market',
+  'Shoe Avenue corner E. Dela Paz',
+  'P. Burgos St. riverside',
+  'Marikina Bridge approach',
+]
 export const incidentStatuses = ['Open', 'For inspection', 'In progress', 'Resolved'] as const
 export type IncidentStatus = typeof incidentStatuses[number]
 
@@ -67,6 +72,8 @@ export type DualModelFrameResult = {
   height?: number
   trash_findings: TrashFindings
   road_defect_findings: RoadDefectFindings
+  frame_hotspot_score?: number
+  frame_priority_level?: 'CRITICAL' | 'ELEVATED' | 'ROUTINE'
 }
 
 export type UnifiedIncidentResponse = {
@@ -76,6 +83,7 @@ export type UnifiedIncidentResponse = {
     type: 'video' | 'image'
     fps?: number
     duration_sec?: number
+    media_url?: string
   }
   location: {
     street_name: string
@@ -96,18 +104,29 @@ export type UnifiedIncidentResponse = {
 }
 
 export type Observation = {
-  id: string; reporter: string; source: 'Resident photo' | 'Video observation'; location: string;
-  category: Category; observedAt: string; submittedAt: string; description: string;
-  photo?: string; clipTime?: string; confidence: number;
-  review: 'Pending review' | 'Validated' | 'Rejected'; incidentId?: string; reviewNote: string;
-  dualModelResult?: UnifiedIncidentResponse;
-  detections?: TrashDetection[];
-  regions?: TrashRegion[];
-  imageWidth?: number;
-  imageHeight?: number;
-  defects?: RoadDefect[];
-  hotspotScore?: number;
-  priorityLevel?: 'CRITICAL' | 'ELEVATED' | 'ROUTINE';
+  id: string
+  reporter: string
+  source: 'Resident photo' | 'Video observation'
+  location: string
+  category: Category
+  observedAt: string
+  submittedAt: string
+  description: string
+  photo?: string
+  videoUrl?: string
+  clipTime?: string
+  confidence: number
+  review: 'Pending review' | 'Validated' | 'Rejected'
+  incidentId?: string
+  reviewNote: string
+  dualModelResult?: UnifiedIncidentResponse
+  detections?: TrashDetection[]
+  regions?: TrashRegion[]
+  imageWidth?: number
+  imageHeight?: number
+  defects?: RoadDefect[]
+  hotspotScore?: number
+  priorityLevel?: 'CRITICAL' | 'ELEVATED' | 'ROUTINE'
 }
 
 export function computeHotspotScore(
@@ -127,90 +146,471 @@ export function computeHotspotScore(
   return Math.min(100.0, Math.max(0.0, Math.round(score * 10) / 10))
 }
 
-export type Incident = { id: string; category: Category; location: string; status: IncidentStatus; note: string; updatedAt: string }
+export type Incident = {
+  id: string
+  category: Category
+  location: string
+  status: IncidentStatus
+  note: string
+  updatedAt: string
+}
+
 export type Store = { observations: Observation[]; incidents: Incident[] }
 export type RankedIncident = Incident & { frequency: number; latest: string }
-export type NewReport = Pick<Observation, 'location' | 'category' | 'observedAt' | 'description' | 'photo' | 'dualModelResult' | 'detections' | 'regions' | 'imageWidth' | 'imageHeight' | 'defects' | 'hotspotScore' | 'priorityLevel'>
-export const residentId = 'Demo resident'
-export function normalizeLocation(value: string) { return value.trim().replace(/\s+/g, ' ').toLowerCase() }
+
+export type HotspotLeaderboardEntry = {
+  location: string
+  subDistrict: string
+  frequency: number
+  latest: string
+  incidents: number
+  trashIncidents: number
+  potholeIncidents: number
+  trashObservations: number
+  potholeObservations: number
+  primaryIssue: 'Trash Concentration' | 'Road Surface Hazard' | 'Dual-Hazard Zone'
+  hotspotScore: number
+  priorityLevel: 'CRITICAL' | 'ELEVATED' | 'ROUTINE'
+  trendStatus: 'Escalating' | 'New' | 'Stable' | 'Resolving'
+}
+
+export type NewReport = Pick<
+  Observation,
+  | 'location'
+  | 'category'
+  | 'observedAt'
+  | 'description'
+  | 'photo'
+  | 'videoUrl'
+  | 'dualModelResult'
+  | 'detections'
+  | 'regions'
+  | 'imageWidth'
+  | 'imageHeight'
+  | 'defects'
+  | 'hotspotScore'
+  | 'priorityLevel'
+>
+
+export const residentId = 'Citizen (Brgy. Santa Elena)'
+
+export function normalizeLocation(value: string) {
+  return value.trim().replace(/\s+/g, ' ').toLowerCase()
+}
+
+const STORE_STORAGE_KEY = 'bantai_municipal_store_v2'
 
 export function seedStore(now = new Date()): Store {
   const ago = (hours: number) => new Date(now.getTime() - hours * 3600000).toISOString()
   const incidents: Incident[] = [
-    { id: 'INC-001', category: 'Trash', location: locations[0], status: 'Open', note: 'Awaiting barangay cleanup assessment.', updatedAt: ago(3) },
-    { id: 'INC-002', category: 'Pothole', location: locations[1], status: 'For inspection', note: 'Maintenance team will inspect the reported road defect.', updatedAt: ago(5) },
-    { id: 'INC-003', category: 'Pothole', location: locations[3], status: 'In progress', note: 'Inspection completed. Maintenance coordination is in progress.', updatedAt: ago(8) },
-    { id: 'INC-004', category: 'Trash', location: locations[2], status: 'Resolved', note: 'Cleanup completed and verified by the barangay team.', updatedAt: ago(12) },
+    {
+      id: 'INC-001',
+      category: 'Trash',
+      location: locations[0],
+      status: 'Open',
+      note: 'Awaiting barangay sanitation crew dispatch.',
+      updatedAt: ago(3),
+    },
+    {
+      id: 'INC-002',
+      category: 'Pothole',
+      location: locations[1],
+      status: 'For inspection',
+      note: 'Road engineering team scheduled to inspect crater depth.',
+      updatedAt: ago(5),
+    },
+    {
+      id: 'INC-003',
+      category: 'Pothole',
+      location: locations[3],
+      status: 'In progress',
+      note: 'Field inspection completed. Asphalt patching crew coordinated.',
+      updatedAt: ago(8),
+    },
+    {
+      id: 'INC-004',
+      category: 'Trash',
+      location: locations[2],
+      status: 'Resolved',
+      note: 'Waste clearance completed and verified by barangay inspector.',
+      updatedAt: ago(12),
+    },
   ]
   const observations: Observation[] = []
   for (const [index, incident] of incidents.entries()) {
     const count = [4, 3, 3, 2][index]
-    for (let n = 0; n < count; n++) observations.push({
-      id: `OBS-${String(observations.length + 1).padStart(3, '0')}`,
-      reporter: n === 0 ? residentId : 'Sample resident', source: 'Resident photo',
-      location: incident.location, category: incident.category, observedAt: ago(3 + index * 3 + n * 20), submittedAt: ago(2 + index * 3 + n * 20),
-      description: `Sample observation of ${incident.category.toLowerCase()} near this location.`,
-      confidence: 90 - n, review: 'Validated', incidentId: incident.id, reviewNote: 'Validated by barangay admin.',
-    })
+    for (let n = 0; n < count; n++) {
+      observations.push({
+        id: `OBS-${String(observations.length + 1).padStart(3, '0')}`,
+        reporter: n === 0 ? residentId : 'Verified Citizen Reporter',
+        source: 'Resident photo',
+        location: incident.location,
+        category: incident.category,
+        observedAt: ago(3 + index * 3 + n * 20),
+        submittedAt: ago(2 + index * 3 + n * 20),
+        description: `Field report of ${incident.category.toLowerCase()} accumulation near ${incident.location}.`,
+        confidence: 90 - n,
+        review: 'Validated',
+        incidentId: incident.id,
+        reviewNote: 'Validated by barangay operations.',
+        hotspotScore: incident.category === 'Trash' ? 50.0 : 65.0,
+        priorityLevel: incident.category === 'Trash' ? 'ELEVATED' : 'ELEVATED',
+      })
+    }
   }
-  observations.unshift({ id: 'OBS-013', reporter: 'Sample resident', source: 'Resident photo', location: locations[0], category: 'Trash', observedAt: ago(1), submittedAt: ago(.5), description: 'Another observation of piled garbage beside the market entrance. Please check whether this is the existing incident.', confidence: 93, review: 'Pending review', reviewNote: '' })
+  observations.unshift({
+    id: 'OBS-013',
+    reporter: 'Verified Citizen Reporter',
+    source: 'Resident photo',
+    location: locations[0],
+    category: 'Trash',
+    observedAt: ago(1),
+    submittedAt: ago(0.5),
+    description: 'Uncollected waste bags and scattered packaging beside the public market entrance.',
+    confidence: 93,
+    review: 'Pending review',
+    reviewNote: '',
+    hotspotScore: 53.0,
+    priorityLevel: 'ELEVATED',
+  })
   return { incidents, observations }
+}
+
+function deduplicateMultiFrameObservations(observations: Observation[]): Observation[] {
+  const seenIncidentIds = new Set<string>()
+  const seenBaseIds = new Set<string>()
+  const result: Observation[] = []
+
+  for (const obs of observations) {
+    const dualId = obs.dualModelResult?.incident_id
+    const isSplitVideoObs =
+      (obs.dualModelResult?.frames && obs.dualModelResult.frames.length > 1) ||
+      /\s*\[Frame \d+ @ [\d.]+s\]$/i.test(obs.description)
+
+    if (isSplitVideoObs) {
+      const baseId = obs.id.replace(/-\d+$/, '')
+      if (dualId && seenIncidentIds.has(dualId)) {
+        continue
+      }
+      if (seenBaseIds.has(baseId)) {
+        continue
+      }
+      if (dualId) seenIncidentIds.add(dualId)
+      seenBaseIds.add(baseId)
+
+      const firstFrame = obs.dualModelResult?.frames?.[0]
+      result.push({
+        ...obs,
+        id: baseId,
+        description: obs.description.replace(/\s*\[Frame \d+ @ [\d.]+s\]$/i, '').trim() || obs.category,
+        photo: firstFrame?.frame_url || obs.photo,
+        detections: firstFrame?.trash_findings?.detections || obs.detections,
+        regions: firstFrame?.trash_findings?.region_list || obs.regions,
+        defects: firstFrame?.road_defect_findings?.defects || obs.defects,
+        hotspotScore: obs.dualModelResult?.hotspot_score ?? obs.hotspotScore,
+        priorityLevel: obs.dualModelResult?.priority_level ?? obs.priorityLevel,
+      })
+    } else {
+      result.push(obs)
+    }
+  }
+  return result
+}
+
+export function loadPersistedStore(): Store {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return seedStore()
+  }
+  try {
+    const raw = window.localStorage.getItem(STORE_STORAGE_KEY)
+    if (!raw) return seedStore()
+    const parsed = JSON.parse(raw) as Store
+    if (!parsed || !Array.isArray(parsed.incidents) || !Array.isArray(parsed.observations)) {
+      return seedStore()
+    }
+    return {
+      ...parsed,
+      observations: deduplicateMultiFrameObservations(parsed.observations),
+    }
+  } catch {
+    return seedStore()
+  }
+}
+
+export function savePersistedStore(store: Store): void {
+  if (typeof window === 'undefined' || !window.localStorage) return
+  try {
+    window.localStorage.setItem(STORE_STORAGE_KEY, JSON.stringify(store))
+  } catch {
+    // Ignore storage quota errors
+  }
+}
+
+export function resetPersistedStore(): Store {
+  const fresh = seedStore()
+  savePersistedStore(fresh)
+  return fresh
 }
 
 // Only validated observations contribute. Resolved incidents stay in the history.
 export function rankIncidents(store: Store): RankedIncident[] {
-  return store.incidents.filter(i => i.status !== 'Resolved').map(incident => {
-    const evidence = store.observations.filter(o => o.review === 'Validated' && o.incidentId === incident.id)
-    return { ...incident, frequency: evidence.length, latest: evidence.map(o => o.observedAt).sort().slice(-1)[0] || incident.updatedAt }
-  }).filter(i => i.frequency > 0).sort((a, b) => b.frequency - a.frequency || b.latest.localeCompare(a.latest) || a.id.localeCompare(b.id))
+  return store.incidents
+    .filter(i => i.status !== 'Resolved')
+    .map(incident => {
+      const evidence = store.observations.filter(
+        o => o.review === 'Validated' && o.incidentId === incident.id,
+      )
+      return {
+        ...incident,
+        frequency: evidence.length,
+        latest:
+          evidence
+            .map(o => o.observedAt)
+            .sort()
+            .slice(-1)[0] || incident.updatedAt,
+      }
+    })
+    .filter(i => i.frequency > 0)
+    .sort(
+      (a, b) =>
+        b.frequency - a.frequency ||
+        b.latest.localeCompare(a.latest) ||
+        a.id.localeCompare(b.id),
+    )
 }
 
-export function rankHotspots(store: Store) {
-  const groups = new Map<string, { location: string; frequency: number; latest: string; incidents: number }>()
-  for (const incident of rankIncidents(store)) {
+export function rankHotspots(
+  store: Store,
+  categoryFilter: Category | 'All' = 'All',
+): HotspotLeaderboardEntry[] {
+  const groups = new Map<
+    string,
+    {
+      location: string
+      frequency: number
+      latest: string
+      incidents: number
+      trashIncidents: number
+      potholeIncidents: number
+      trashObservations: number
+      potholeObservations: number
+      maxObsHotspotScore: number
+      hasOpen: boolean
+      hasInProgress: boolean
+    }
+  >()
+
+  const activeRanked = rankIncidents(store).filter(
+    inc => categoryFilter === 'All' || inc.category === categoryFilter,
+  )
+
+  for (const incident of activeRanked) {
     const key = normalizeLocation(incident.location)
-    const previous = groups.get(key) || { location: incident.location, frequency: 0, latest: '', incidents: 0 }
-    groups.set(key, { location: previous.location, frequency: previous.frequency + incident.frequency, latest: previous.latest > incident.latest ? previous.latest : incident.latest, incidents: previous.incidents + 1 })
+    const previous = groups.get(key) || {
+      location: incident.location,
+      frequency: 0,
+      latest: '',
+      incidents: 0,
+      trashIncidents: 0,
+      potholeIncidents: 0,
+      trashObservations: 0,
+      potholeObservations: 0,
+      maxObsHotspotScore: 0,
+      hasOpen: false,
+      hasInProgress: false,
+    }
+
+    const isTrash = incident.category === 'Trash'
+    const linkedObs = store.observations.filter(
+      o => o.review === 'Validated' && o.incidentId === incident.id,
+    )
+    const maxScoreInIncident = linkedObs.reduce(
+      (acc, o) => Math.max(acc, o.hotspotScore ?? 0),
+      0,
+    )
+
+    groups.set(key, {
+      location: previous.location,
+      frequency: previous.frequency + incident.frequency,
+      latest: previous.latest > incident.latest ? previous.latest : incident.latest,
+      incidents: previous.incidents + 1,
+      trashIncidents: previous.trashIncidents + (isTrash ? 1 : 0),
+      potholeIncidents: previous.potholeIncidents + (isTrash ? 0 : 1),
+      trashObservations: previous.trashObservations + (isTrash ? incident.frequency : 0),
+      potholeObservations: previous.potholeObservations + (isTrash ? 0 : incident.frequency),
+      maxObsHotspotScore: Math.max(previous.maxObsHotspotScore, maxScoreInIncident),
+      hasOpen: previous.hasOpen || incident.status === 'Open',
+      hasInProgress: previous.hasInProgress || incident.status === 'In progress',
+    })
   }
-  return [...groups.values()].sort((a, b) => b.frequency - a.frequency || b.latest.localeCompare(a.latest) || a.location.localeCompare(b.location))
+
+  return [...groups.values()]
+    .map(g => {
+      let primaryIssue: HotspotLeaderboardEntry['primaryIssue'] = 'Trash Concentration'
+      if (g.trashIncidents > 0 && g.potholeIncidents > 0) {
+        primaryIssue = 'Dual-Hazard Zone'
+      } else if (g.potholeIncidents > 0) {
+        primaryIssue = 'Road Surface Hazard'
+      }
+
+      // Compute calibrated municipal hotspot score combining incident density & model severity
+      const baseCalc = Math.min(
+        100,
+        Math.round(
+          (g.trashObservations * 18.0 +
+            g.potholeObservations * 26.0 +
+            g.incidents * 12.0) *
+            10,
+        ) / 10,
+      )
+      const hotspotScore = Math.max(baseCalc, g.maxObsHotspotScore)
+      const priorityLevel: 'CRITICAL' | 'ELEVATED' | 'ROUTINE' =
+        hotspotScore >= 75 ? 'CRITICAL' : hotspotScore >= 40 ? 'ELEVATED' : 'ROUTINE'
+
+      let trendStatus: HotspotLeaderboardEntry['trendStatus'] = 'Stable'
+      if (g.frequency >= 4 && g.hasOpen) trendStatus = 'Escalating'
+      else if (g.hasInProgress) trendStatus = 'Resolving'
+      else if (g.frequency <= 2 && g.hasOpen) trendStatus = 'New'
+
+      return {
+        location: g.location,
+        subDistrict: 'Brgy. Santa Elena · Marikina City',
+        frequency: g.frequency,
+        latest: g.latest,
+        incidents: g.incidents,
+        trashIncidents: g.trashIncidents,
+        potholeIncidents: g.potholeIncidents,
+        trashObservations: g.trashObservations,
+        potholeObservations: g.potholeObservations,
+        primaryIssue,
+        hotspotScore,
+        priorityLevel,
+        trendStatus,
+      }
+    })
+    .sort(
+      (a, b) =>
+        b.frequency - a.frequency ||
+        b.latest.localeCompare(a.latest) ||
+        a.location.localeCompare(b.location),
+    )
 }
 
 export function duplicateCandidates(store: Store, report: Observation) {
-  return store.incidents.filter(i => i.status !== 'Resolved' && i.category === report.category && normalizeLocation(i.location) === normalizeLocation(report.location))
+  return store.incidents.filter(
+    i =>
+      i.status !== 'Resolved' &&
+      i.category === report.category &&
+      normalizeLocation(i.location) === normalizeLocation(report.location),
+  )
 }
 
 export function addResidentReport(store: Store, report: NewReport, id: string, now: string): Store {
-  const observation: Observation = { ...report, location: report.location.trim(), description: report.description.trim(), id, submittedAt: now, reporter: residentId, source: 'Resident photo', confidence: 92, review: 'Pending review', reviewNote: '' }
+  const observation: Observation = {
+    ...report,
+    location: report.location.trim(),
+    description: report.description.trim(),
+    id,
+    submittedAt: now,
+    reporter: residentId,
+    source: 'Resident photo',
+    confidence: 92,
+    review: 'Pending review',
+    reviewNote: '',
+  }
   return { ...store, observations: [observation, ...store.observations] }
 }
 
-export function reviewReport(store: Store, reportId: string, decision: 'validate' | 'reject', targetId: string | undefined, note: string, now: string, newId: string): Store {
+export function reviewReport(
+  store: Store,
+  reportId: string,
+  decision: 'validate' | 'reject',
+  targetId: string | undefined,
+  note: string,
+  now: string,
+  newId: string,
+): Store {
   const report = store.observations.find(o => o.id === reportId)
   if (!report || report.review !== 'Pending review') return store
   if (decision === 'reject') {
     if (!note.trim()) return store
-    return { ...store, observations: store.observations.map(o => o.id === reportId ? { ...o, review: 'Rejected', reviewNote: note.trim() } : o) }
+    return {
+      ...store,
+      observations: store.observations.map(o =>
+        o.id === reportId ? { ...o, review: 'Rejected', reviewNote: note.trim() } : o,
+      ),
+    }
   }
-  const target = targetId ? duplicateCandidates(store, report).find(i => i.id === targetId) : undefined
+  const target = targetId
+    ? duplicateCandidates(store, report).find(i => i.id === targetId)
+    : undefined
   if (targetId && !target) return store
   const id = target?.id || newId
   return {
-    incidents: target ? store.incidents : [...store.incidents, { id, category: report.category, location: report.location, status: 'Open', note: note.trim() || 'Validated and awaiting inspection.', updatedAt: now }],
-    observations: store.observations.map(o => o.id === reportId ? { ...o, review: 'Validated', incidentId: id, reviewNote: note.trim() || (target ? 'Linked to an existing incident.' : 'Validated as a new incident.') } : o),
+    incidents: target
+      ? store.incidents
+      : [
+          ...store.incidents,
+          {
+            id,
+            category: report.category,
+            location: report.location,
+            status: 'Open',
+            note: note.trim() || 'Validated and awaiting field inspection.',
+            updatedAt: now,
+          },
+        ],
+    observations: store.observations.map(o =>
+      o.id === reportId
+        ? {
+            ...o,
+            review: 'Validated',
+            incidentId: id,
+            reviewNote:
+              note.trim() ||
+              (target ? 'Linked to an existing active incident.' : 'Validated as a new municipal incident.'),
+          }
+        : o,
+    ),
   }
 }
 
-export function updateIncident(store: Store, id: string, status: IncidentStatus, note: string, now: string): Store {
+export function updateIncident(
+  store: Store,
+  id: string,
+  status: IncidentStatus,
+  note: string,
+  now: string,
+): Store {
   if (!incidentStatuses.includes(status) || !note.trim()) return store
-  return { ...store, incidents: store.incidents.map(i => i.id === id ? { ...i, status, note: note.trim(), updatedAt: now } : i) }
+  return {
+    ...store,
+    incidents: store.incidents.map(i =>
+      i.id === id ? { ...i, status, note: note.trim(), updatedAt: now } : i,
+    ),
+  }
 }
 
-export function addVideoObservations(store: Store, location: string, category: Category, now: string, batch: string): Store {
+export function addVideoObservations(
+  store: Store,
+  location: string,
+  category: Category,
+  now: string,
+  batch: string,
+): Store {
   const observations: Observation[] = ['00:04', '00:12', '00:23'].map((clipTime, index) => ({
-    id: `VID-${batch}-${index + 1}`, source: 'Video observation', reporter: 'Demo camera', location, category,
-    observedAt: new Date(new Date(now).getTime() - (23 - [4, 12, 23][index]) * 1000).toISOString(), submittedAt: now,
-    description: `Simulated ${category.toLowerCase()} observation at clip position ${clipTime}. Review before counting toward incident frequency.`,
-    clipTime, confidence: [89, 94, 91][index], review: 'Pending review', reviewNote: '',
+    id: `VID-${batch}-${index + 1}`,
+    source: 'Video observation',
+    reporter: 'Patrol Camera 01',
+    location,
+    category,
+    observedAt: new Date(new Date(now).getTime() - (23 - [4, 12, 23][index]) * 1000).toISOString(),
+    submittedAt: now,
+    description: `Automated patrol camera ${category.toLowerCase()} capture at clip timestamp ${clipTime}. Queued for barangay verification.`,
+    clipTime,
+    confidence: [89, 94, 91][index],
+    review: 'Pending review',
+    reviewNote: '',
   }))
   return { ...store, observations: [...observations, ...store.observations] }
 }

@@ -152,10 +152,31 @@ async def serve_extracted_frame(request: Request) -> FileResponse | JSONResponse
     return FileResponse(frame_path, media_type="image/jpeg")
 
 
+async def serve_source_media(request: Request) -> FileResponse | JSONResponse:
+    """Serves the original uploaded video or image file for synchronized HTML5 playback."""
+    incident_id = request.path_params.get("incident_id")
+    filename = request.path_params.get("filename")
+    media_path = STORAGE_ROOT / incident_id / filename
+    if not media_path.is_file():
+        return JSONResponse({"error": "Source media not found"}, status_code=404)
+    ext = media_path.suffix.lower()
+    mime_map = {
+        ".mp4": "video/mp4",
+        ".webm": "video/webm",
+        ".mov": "video/quicktime",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+    }
+    return FileResponse(media_path, media_type=mime_map.get(ext, "application/octet-stream"))
+
+
 routes = [
     Route("/api/v1/health", health_check, methods=["GET"]),
     Route("/api/v1/analyze", analyze_media, methods=["POST"]),
     Route("/api/v1/media/{incident_id}/frames/{filename}", serve_extracted_frame, methods=["GET"]),
+    Route("/api/v1/media/{incident_id}/source/{filename}", serve_source_media, methods=["GET"]),
 ]
 
 middleware = [

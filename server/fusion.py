@@ -199,9 +199,13 @@ def fuse_dual_model_incident(
     has_high_pothole = summary_potholes_by_severity.get("high", 0) > 0
     priority_level, dispatch_recommendation = determine_priority_and_dispatch(hotspot_score, has_pile, has_high_pothole)
 
+    source_media_out = dict(media_meta)
+    if media_meta.get("filename"):
+        source_media_out["media_url"] = f"{media_url_prefix}/{incident_id}/source/{media_meta['filename']}"
+
     return {
         "incident_id": incident_id,
-        "source_media": media_meta,
+        "source_media": source_media_out,
         "location": {
             "street_name": location_str,
             "latitude": 14.653889,   # Pilot Santa Elena, Marikina default
