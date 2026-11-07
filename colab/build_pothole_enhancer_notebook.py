@@ -906,7 +906,7 @@ Works standalone even after a browser refresh!
 - **8C (Live Browser Webcam)**: Set `RUN_COLAB_WEBCAM = True` to stream your webcam live.
 """)
 code(r"""
-# @title 8A. Manual Photo & Video (.mp4) Upload (DBSCAN Single-Crater Fusion + Manhole/Cover Rejector + Video Manhole Blacklist)
+# @title 8A. Manual Photo & Video (.mp4) Upload — Master Combined Engine (Best of V1–V6)
 import io
 from pathlib import Path
 import shutil
@@ -989,7 +989,7 @@ def estimate_pothole_severity(box, img_width, img_height, score):
 
 
 def _is_roadside_litter_or_leaf(rgb_arr, box, score):
-    '''Reject colorful roadside trash wrappers, plastic cups, or dry leaves in curb gutters.'''
+    '''Reject colorful roadside trash wrappers, plastic cups, dry leaves, and weathered white paint specks (V1-V6 combined).'''
     h, w, _ = rgb_arr.shape
     x1, y1, x2, y2 = [max(0, int(v)) for v in box]
     x2, y2 = min(w, x2), min(h, y2)
@@ -1008,12 +1008,35 @@ def _is_roadside_litter_or_leaf(rgb_arr, box, score):
         area_ratio = ((x2 - x1) * (y2 - y1)) / float(max(1, w * h))
         if area_ratio < 0.015 and val_p90 > 225.0 and sat_p85 > 35.0 and score < 0.48:
             return True
-        # Reject weathered white lane stripes / crosswalk paint specks on flat asphalt (no dark shadow cavity)
+        # From V3-V6: Reject weathered white lane stripes / crosswalk paint specks on flat asphalt (no dark shadow cavity)
         val_p10 = float(np.percentile(hsv[..., 2], 10))
         val_p85 = float(np.percentile(hsv[..., 2], 85))
         if area_ratio < 0.015 and score < 0.48:
             if val_p85 >= 210.0 and val_p10 >= 100.0:
                 return True
+    return False
+
+
+def _is_flat_intact_concrete_or_road_slab(gray_arr, box, score, is_video_stream=False):
+    '''Reject uniform flat concrete slabs or smooth road surface boxes that lack a dark pothole cavity or broken rim.'''
+    gh, gw = gray_arr.shape
+    x1, y1, x2, y2 = [max(0, int(round(v))) for v in box]
+    x2, y2 = min(gw, x2), min(gh, y2)
+    if x2 <= x1 + 6 or y2 <= y1 + 6:
+        return True
+    patch = gray_arr[y1:y2, x1:x2]
+    p_std = float(np.std(patch))
+    p10 = float(np.percentile(patch, 10))
+    p90 = float(np.percentile(patch, 90))
+    contrast_span = p90 - p10
+    area_ratio = ((x2 - x1) * (y2 - y1)) / float(max(1, gw * gh))
+
+    # On video streams, suppress low/mid-confidence boxes on flat concrete slabs without a dark shadow/cavity
+    if is_video_stream:
+        if score < 0.34 and p_std < 24.0 and contrast_span < 58.0:
+            return True
+        if area_ratio > 0.055 and score < 0.48 and p10 > 82.0 and p_std < 30.0:
+            return True
     return False
 
 
@@ -1036,7 +1059,7 @@ def _get_scaled_pil_font(font_size):
 
 
 def _has_clean_ellipse_or_convex_manhole_rim(patch_u8, aspect):
-    '''OpenCV Canny + Contour Solidity + cv2.fitEllipse check for flush circular/elliptical manhole lids (even under video motion blur).'''
+    '''OpenCV Canny + Contour Solidity + cv2.fitEllipse check for flush circular/elliptical manhole lids (V1-V6).'''
     ph, pw = patch_u8.shape
     if ph < 14 or pw < 18 or aspect < 1.15 or aspect > 4.2:
         return False
@@ -1074,11 +1097,7 @@ def _has_clean_ellipse_or_convex_manhole_rim(patch_u8, aspect):
 
 
 def _is_manhole_or_utility_cover(canon_gray, cbox, is_cabin_dashcam=False, is_video_stream=False):
-    '''Resolution-invariant detector for circular/elliptical cast-iron manhole covers, valve caps & concrete collars.
-
-    Operates on canonical (980x640) grayscale coordinates so 1px waffle/ring frequencies, OpenCV ellipse rims,
-    and aspect ratios behave identically across 800x600, 1600x1200, or 4K photos & videos.
-    '''
+    '''Resolution-invariant detector for circular/elliptical cast-iron manhole covers, valve caps & concrete collars (V1-V6 combined).'''
     if is_cabin_dashcam:
         return False
     ch, cw = canon_gray.shape
@@ -1103,22 +1122,21 @@ def _is_manhole_or_utility_cover(canon_gray, cbox, is_cabin_dashcam=False, is_vi
     if p_std < 12.0:
         return False
 
-    # High-frequency vertical sign flips from foreshortened cast-iron waffle/ribbed grid & concentric rings
     dy = np.diff(patch, axis=0)
     flip_y = float(np.mean((dy[:-1, :] * dy[1:, :]) < -2.0)) if dy.shape[0] > 2 else 0.0
     strong_flip_y = float(np.mean((dy[:-1, :] * dy[1:, :]) < -12.0)) if dy.shape[0] > 2 else 0.0
     lr_diff = float(np.mean(np.abs(patch - patch[:, ::-1]))) / (p_std + 1e-4)
     tb_diff = float(np.mean(np.abs(patch - patch[::-1, :]))) / (p_std + 1e-4)
 
-    # 1. Corner-cropped foreground waffle manhole cover (touching bottom + left/right frame border with uniform cast-iron grid)
-    touches_bottom = cy2 >= ch - 10
-    touches_side = (cx1 <= 12) or (cx2 >= cw - 12)
-    if touches_bottom and touches_side and area_ratio <= 0.045 and aspect <= 1.85:
+    # 1. Corner-cropped foreground waffle manhole cover (V2 border margin + V3-V6 p5 > 85 dark-cavity protection)
+    touches_bottom = cy2 >= ch - 12
+    touches_side = (cx1 <= 14) or (cx2 >= cw - 14)
+    if touches_bottom and touches_side and area_ratio <= 0.050 and aspect <= 1.95:
         p5 = float(np.percentile(patch, 5))
-        if p_std < 24.0 and p5 > 85.0 and flip_y >= 0.16:
+        if p_std < 25.0 and p5 > 85.0 and flip_y >= 0.16:
             return True
 
-    # 2. Video-mode approaching manhole check (handles motion-blurred or closer elliptical manholes on video)
+    # 2. Video-mode approaching manhole check
     if is_video_stream and 1.22 <= aspect <= 4.5 and 0.0008 <= area_ratio <= 0.060 and cy_ratio <= 0.82:
         if min(lr_diff, tb_diff) <= 1.05 and flip_y >= 0.21:
             if area_ratio < 0.008 or (strong_flip_y >= 0.28 and p_std >= 27.0):
@@ -1126,7 +1144,7 @@ def _is_manhole_or_utility_cover(canon_gray, cbox, is_cabin_dashcam=False, is_vi
         if _has_clean_ellipse_or_convex_manhole_rim(np.clip(patch, 0, 255).astype(np.uint8), aspect) and min(lr_diff, tb_diff) <= 1.08:
             return True
 
-    # 3. Standard mid/upper road foreshortened elliptical manhole cover / utility cap / collar
+    # 3. Standard mid/upper road foreshortened elliptical manhole cover / valve cap / collar
     min_aspect = 1.25 if area_ratio < 0.0065 else 1.88
     max_cy = 0.74 if area_ratio < 0.0065 else 0.65
     if aspect < min_aspect or aspect > 5.2:
@@ -1136,8 +1154,6 @@ def _is_manhole_or_utility_cover(canon_gray, cbox, is_cabin_dashcam=False, is_vi
     if cy_ratio > max_cy:
         return False
 
-    # Larger boxes (area_ratio >= 0.008) must have strong metallic waffle/rim sign-flips (strong_flip_y >= 0.32 & p_std >= 30)
-    # so smooth dark sunken asphalt patches in concrete (strong_flip_y <= 0.27, p_std <= 26) are NEVER mistaken for manholes!
     if area_ratio >= 0.008 and (strong_flip_y < 0.32 or p_std < 30.0):
         return False
 
@@ -1155,7 +1171,6 @@ def _recover_concrete_slab_damage(canon_gray, rx, ry, rejected_manholes):
         return []
 
     recovered = []
-    # 1. Mid-ground sunken dark cracked patch on concrete
     my1, my2 = int(ch * 0.44), int(ch * 0.68)
     mx1, mx2 = int(cw * 0.25), int(cw * 0.90)
     mid_roi = canon_gray[my1:my2, mx1:mx2]
@@ -1172,7 +1187,6 @@ def _recover_concrete_slab_damage(canon_gray, rx, ry, rejected_manholes):
             if not any(_box_iomin(cand_box, mh) >= 0.25 or _box_iou(cand_box, mh) >= 0.15 for mh in rejected_manholes):
                 recovered.append({"xyxy": cand_box, "score": 0.684, "class_name": "pothole"})
 
-    # 2. Foreground deep spalled concrete fracture / cavity
     by1_idx, by2_idx = int(ch * 0.68), int(ch * 0.98)
     bx1_idx, bx2_idx = int(cw * 0.25), int(cw * 0.72)
     bot_roi = canon_gray[by1_idx:by2_idx, bx1_idx:bx2_idx]
@@ -1194,7 +1208,6 @@ def _recover_concrete_slab_damage(canon_gray, rx, ry, rejected_manholes):
 
 
 def _is_true_cabin_dashcam(gray_arr):
-    '''Exact separation between 16:9+ Cabin Dashcams (aspect >= 1.65 & dark dashboard) vs 3:2 / 4:3 / 9:16 Road Views.'''
     h, w = gray_arr.shape
     aspect = w / float(max(1, h))
     if aspect < 1.65:
@@ -1207,7 +1220,7 @@ def _is_true_cabin_dashcam(gray_arr):
 
 
 def dbscan_single_crater_fusion(detections, eps_iou=0.30, min_samples=1, gray_arr=None):
-    '''DBSCAN density clustering on single-crater overlap metric with Crater Rim Context Dilation.'''
+    '''DBSCAN density clustering on single-crater overlap metric with Crater Rim Context Dilation (V4-V6).'''
     if len(detections) <= 1:
         if len(detections) == 1 and gray_arr is not None and float(detections[0].get("score", 0.0)) >= 0.48:
             core = dict(detections[0])
@@ -1242,7 +1255,6 @@ def dbscan_single_crater_fusion(detections, eps_iou=0.30, min_samples=1, gray_ar
             return True
         return False
 
-    # Star-shaped DBSCAN around highest-confidence core seeds (prevents multi-hop transitive chaining across separate craters)
     visited = [False] * n
     fused = []
     for i in range(n):
@@ -1256,7 +1268,6 @@ def dbscan_single_crater_fusion(detections, eps_iou=0.30, min_samples=1, gray_ar
         for j in neighbors:
             visited[j] = True
         core = dict(ordered[i])
-        # Score-weighted box refinement using high-agreement cluster members (IoU >= 0.45)
         tight_members = [ordered[j] for j in neighbors if _box_iou(core["xyxy"], ordered[j]["xyxy"]) >= 0.45]
         if len(tight_members) > 1:
             weights = np.array([float(m.get("score", 0.2)) ** 2 for m in tight_members], dtype=np.float64)
@@ -1265,7 +1276,6 @@ def dbscan_single_crater_fusion(detections, eps_iou=0.30, min_samples=1, gray_ar
             refined = (coords * weights[:, None]).sum(axis=0)
             core["xyxy"] = [round(float(v), 2) for v in refined]
 
-        # Crater Rim Context Dilation (enclosing jagged broken asphalt around confident sunken patches)
         if gray_arr is not None and float(core.get("score", 0.0)) >= 0.48:
             gh, gw = gray_arr.shape
             bx1, by1, bx2, by2 = core["xyxy"]
@@ -1282,13 +1292,12 @@ def dbscan_single_crater_fusion(detections, eps_iou=0.30, min_samples=1, gray_ar
 
 
 def smart_pothole_detect(pil_img, conf_threshold=0.20, is_video_stream=False, return_rejected_manholes=False):
-    '''All-terrain smart pothole detection for photos and video frames (with DBSCAN Fusion + Manhole/Utility-Cover Rejection).'''
+    '''Master All-Terrain Smart Pothole Detector combining the best of V1-V6.'''
     w, h = pil_img.size
     total_area = float(max(1, w * h))
     rgb_arr = np.array(pil_img, dtype=np.float32)
     gray = np.array(pil_img.convert("L"), dtype=np.float32)
 
-    # Canonical (980x640) grayscale image for resolution-invariant manhole/utility-cover rejection
     canon_pil = ImageOps.contain(pil_img.convert("L"), (980, 640))
     cw, ch = canon_pil.size
     canon_gray = np.array(canon_pil, dtype=np.float32)
@@ -1300,35 +1309,59 @@ def smart_pothole_detect(pil_img, conf_threshold=0.20, is_video_stream=False, re
 
     # 1. Full-Frame pass
     full_dets = detector.detect(pil_img, mode="video", confidence=conf_threshold)
-    strong_full_craters = [d for d in full_dets if float(d.get("score", 0.0)) >= 0.42]
+    strong_full_craters = [
+        d for d in full_dets
+        if float(d.get("score", 0.0)) >= 0.45
+        and ((d["xyxy"][2] - d["xyxy"][0]) * (d["xyxy"][3] - d["xyxy"][1]) / total_area) >= 0.012
+        and not _is_manhole_or_utility_cover(
+            canon_gray,
+            [d["xyxy"][0] * rx, d["xyxy"][1] * ry, d["xyxy"][2] * rx, d["xyxy"][3] * ry],
+            is_cabin_dashcam=is_cabin_dashcam,
+            is_video_stream=is_video_stream,
+        )
+    ]
 
-    # 2. Road pass:
+    # 2. Road pass (V6 Dual Portrait Windows + Center Trench Window on Video; Multi-Tile SAHI on Photos)
     if is_video_stream:
-        # Fast Lower-Road Crop (doubles effective road resolution on driving/walking video frames)
-        road_y0 = int(h * 0.30)
-        road_crop = pil_img.crop((0, road_y0, w, h))
         road_conf = max(0.18, conf_threshold * 0.85)
-        if hasattr(detector, "_predict_raw"):
-            road_raw = detector._predict_raw(road_crop, road_conf)
-        elif hasattr(detector, "_raw_predict"):
-            road_raw = detector._raw_predict(road_crop, road_conf)
+        road_crops = []
+        if is_portrait_walk:
+            # Window 1 (Upper-Mid Road: 8% to 66% height) captures approaching/mid-road vertical trenches early
+            # Window 2 (Lower Road: 35% to 94% height) captures close-range potholes
+            road_crops.append((0, int(h * 0.08), w, int(h * 0.66)))
+            road_crops.append((0, int(h * 0.35), w, int(h * 0.94)))
         else:
-            road_raw = detector.detect(road_crop, mode="video", confidence=road_conf)
+            road_crops.append((0, int(h * 0.24), w, h))
+
         road_dets = []
-        for rd in road_raw:
-            rx1, ry1, rx2, ry2 = rd["xyxy"]
-            rd_copy = dict(rd)
-            rd_copy["xyxy"] = [rx1, ry1 + road_y0, rx2, ry2 + road_y0]
-            road_dets.append(rd_copy)
+        for rx1_c, ry1_c, rx2_c, ry2_c in road_crops:
+            crop_part = pil_img.crop((rx1_c, ry1_c, rx2_c, ry2_c))
+            if hasattr(detector, "_predict_raw"):
+                raw_part = detector._predict_raw(crop_part, road_conf)
+            elif hasattr(detector, "_raw_predict"):
+                raw_part = detector._raw_predict(crop_part, road_conf)
+            else:
+                raw_part = detector.detect(crop_part, mode="video", confidence=road_conf)
+            for rd in raw_part:
+                b = rd["xyxy"]
+                rd_copy = dict(rd)
+                rd_copy["xyxy"] = [b[0] + rx1_c, b[1] + ry1_c, b[2] + rx1_c, b[3] + ry1_c]
+                road_dets.append(rd_copy)
         sahi_dets = road_dets
     else:
-        # Multi-Tile SAHI pass on still photos
-        sahi_dets = detector.detect(pil_img, mode="photo", confidence=max(0.18, conf_threshold * 0.85))
+        sahi_dets = detector.detect(pil_img, mode="photo", confidence=max(0.18, conf_threshold * 0.88))
 
-    candidates = list(sahi_dets) + list(full_dets)
+    # From V2/V3: If a strong crater (>=0.45) is already locked on in video, raise noise floor to 0.32 so bottom-edge 27% concrete specks are ignored
+    if is_video_stream and strong_full_craters and not is_cabin_dashcam:
+        candidates = [
+            d for d in (list(full_dets) + list(sahi_dets))
+            if float(d.get("score", 0.0)) >= 0.32
+        ]
+    else:
+        candidates = list(sahi_dets) + list(full_dets)
 
     max_crater_area = max(
-        [((d["xyxy"][2] - d["xyxy"][0]) * (d["xyxy"][3] - d["xyxy"][1])) for d in candidates if float(d.get("score", 0.0)) >= 0.38]
+        [((d["xyxy"][2] - d["xyxy"][0]) * (d["xyxy"][3] - d["xyxy"][1])) for d in candidates if float(d.get("score", 0.0)) >= 0.36]
         or [0.0]
     )
 
@@ -1347,10 +1380,11 @@ def smart_pothole_detect(pil_img, conf_threshold=0.20, is_video_stream=False, re
         if cy < horizon_limit:
             continue
 
-        # 2. Global Foreground Gravel-Shoulder / Full-Width Slab Gate & Tall Vertical Lane-Stripe/Shadow Gate
+        # 2. Global Foreground Shoulder / Full-Width Slab Gate & Vertical Gate (V6: 0.22 on video for vertical trenches, V1-V5: 0.75 on photos)
         if (bw > w * 0.70 or area_ratio > 0.25) and y2 > h * 0.93 and score < 0.60:
             continue
-        if (bw / bh) < 0.82 and area_ratio > 0.04 and score < 0.55:
+        min_vert_aspect = 0.22 if is_video_stream else 0.65
+        if (bw / bh) < min_vert_aspect and area_ratio > 0.035 and score < 0.52:
             continue
 
         # 3. Universal Manhole Cover, Water-Valve Cap & Concrete-Collar Rejector
@@ -1359,25 +1393,27 @@ def smart_pothole_detect(pil_img, conf_threshold=0.20, is_video_stream=False, re
             rejected_manhole_boxes.append([x1, y1, x2, y2])
             continue
 
-        # 3B. Micro-Speck / Survey-Bolt / Lane-Dot Gate & Smooth Flush Utility-Patch Gate (non-cabin road views)
-        if not is_cabin_dashcam and not is_video_stream:
+        # 3B. Micro-Speck & Smooth Flush Slab Gate
+        if not is_cabin_dashcam:
             if area_ratio < 0.0022:
                 continue
-            if area_ratio < 0.015 and score < 0.27:
+            if not is_video_stream and area_ratio < 0.015 and score < 0.27:
                 c_patch = canon_gray[max(0, int(cbox[1])) : min(ch, int(cbox[3]) + 1), max(0, int(cbox[0])) : min(cw, int(cbox[2]) + 1)]
                 if c_patch.size > 0 and float(np.std(c_patch)) < 26.0:
                     continue
+            if is_video_stream and _is_flat_intact_concrete_or_road_slab(gray, [x1, y1, x2, y2], score, is_video_stream=True):
+                continue
 
-        # 4. HSV Chromatic Roadside Litter & Leaf Filter
+        # 4. HSV Chromatic Roadside Litter, Leaf & White Paint Speck Filter
         if _is_roadside_litter_or_leaf(rgb_arr, [x1, y1, x2, y2], score):
             continue
 
-        # 5. Relative Size Outlier Gate (drops micro specks < 6% of main crater area if low confidence)
-        if max_crater_area > (total_area * 0.02) and box_area < (max_crater_area * 0.06) and score < 0.28:
+        # 5. Relative Size Outlier Gate (V1/V3: drops small <15% low-conf specks when a real crater is present)
+        if max_crater_area > (total_area * 0.018) and box_area < (max_crater_area * 0.15) and score < 0.35:
             continue
 
-        # 6. Video Stream Pre-Filter Floor
-        if is_video_stream and not is_cabin_dashcam and score < 0.20:
+        # 6. Video Stream Stability Floor (prevents 20-27% bottom-edge noise boxes while keeping >=28% approaching trenches)
+        if is_video_stream and not is_cabin_dashcam and score < 0.26:
             continue
 
         if is_cabin_dashcam:
@@ -1388,14 +1424,12 @@ def smart_pothole_detect(pil_img, conf_threshold=0.20, is_video_stream=False, re
             if area_ratio > 0.015 and score < 0.50:
                 continue
         elif is_square_dashcam and not strong_full_craters:
-            # Square 1:1 dashcam left curb-paint edge & bottom hood mask
             if x1 < w * 0.165 or y2 > h * 0.80:
                 continue
 
         kept.append(dict(d))
 
-    # Poison-Pill Manhole Overlap Suppression:
-    # If any candidate box was rejected as a manhole cover on still photos, suppress all overlapping sub-boxes / collar boxes on that same manhole!
+    # Poison-Pill Manhole Overlap Suppression (still photos)
     if rejected_manhole_boxes and not is_video_stream:
         clean_kept = []
         for cand in kept:
@@ -1409,7 +1443,7 @@ def smart_pothole_detect(pil_img, conf_threshold=0.20, is_video_stream=False, re
             clean_kept.append(cand)
         kept = clean_kept
 
-    # Concrete-Slab Sunken Dark Patch & Spall-Cavity Recovery (when base detector clips wide low-angle patches or concrete joint spalls)
+    # Concrete-Slab Recovery for still photos
     if not kept and not is_video_stream and not is_cabin_dashcam and not is_square_dashcam:
         kept.extend(_recover_concrete_slab_damage(canon_gray, rx, ry, rejected_manhole_boxes))
 
@@ -1421,8 +1455,8 @@ def smart_pothole_detect(pil_img, conf_threshold=0.20, is_video_stream=False, re
     return merged
 
 
-def _box_perspective_similarity(track_box, det_box, max_scale=3.5):
-    '''Calculate scale-expansion & perspective-aware similarity for forward-moving video cameras.'''
+def _box_perspective_similarity(track_box, det_box, max_scale=3.4):
+    '''Perspective-aware similarity for forward-moving video cameras (V4-V6).'''
     tx1, ty1, tx2, ty2 = track_box
     dx1, dy1, dx2, dy2 = det_box
     tw, th = max(1.0, tx2 - tx1), max(1.0, ty2 - ty1)
@@ -1437,17 +1471,16 @@ def _box_perspective_similarity(track_box, det_box, max_scale=3.5):
     y_dist = (dcy - tcy) / max(th, dh)
     scale_ratio = max(dw * dh, tw * th) / max(1.0, min(dw * dh, tw * th))
 
-    # Potholes in driving/walking video drift downward (-0.40 <= y_dist <= 1.35) and stay horizontally aligned (x_dist <= 0.48)
-    if x_dist <= 0.48 and -0.40 <= y_dist <= 1.35 and scale_ratio <= max_scale:
-        persp_score = 1.0 - (0.38 * x_dist + 0.28 * abs(y_dist) + 0.14 * (scale_ratio - 1.0) / max_scale)
+    if x_dist <= 0.45 and -0.35 <= y_dist <= 1.25 and scale_ratio <= max_scale:
+        persp_score = 1.0 - (0.40 * x_dist + 0.30 * abs(y_dist) + 0.15 * (scale_ratio - 1.0) / max_scale)
         return max(iou, max(iomin, persp_score))
     return max(iou, iomin)
 
 
 class SmoothIoUVideoTracker:
-    '''IoU + DBSCAN Single-Crater Video Tracker with Velocity-Predicted Motion Tracking & ByteTrack Continuation.'''
+    '''Combined V1-V6 Video Tracker: Perspective ByteTrack Association + Anti-Ghost Coasting Guard.'''
 
-    def __init__(self, iou_threshold=0.18, min_hits=2, max_age=15, alpha=0.82):
+    def __init__(self, iou_threshold=0.20, min_hits=2, max_age=6, alpha=0.80):
         self.iou_threshold = iou_threshold
         self.min_hits = min_hits
         self.max_age = max_age
@@ -1456,11 +1489,10 @@ class SmoothIoUVideoTracker:
         self.tracks = []
         self.blacklisted_manholes = []
 
-    def update(self, detections, rejected_manholes=None):
+    def update(self, detections, rejected_manholes=None, frame_gray=None):
         if rejected_manholes:
             for mh_box in rejected_manholes:
-                # NEVER blacklist an area that already matches an active pothole track!
-                if any(_box_iou(mh_box, t["xyxy"]) >= 0.15 or _box_iomin(mh_box, t["xyxy"]) >= 0.25 for t in self.tracks if t["hits"] >= 2 or t.get("peak_score", 0.0) >= 0.35):
+                if any(_box_iou(mh_box, t["xyxy"]) >= 0.15 or _box_iomin(mh_box, t["xyxy"]) >= 0.25 for t in self.tracks if t["hits"] >= 2 or t.get("peak_score", 0.0) >= 0.38):
                     continue
                 matched_mh = False
                 for bz in self.blacklisted_manholes:
@@ -1478,10 +1510,8 @@ class SmoothIoUVideoTracker:
             bh = max(4.0, bz["xyxy"][3] - bz["xyxy"][1])
             bz["xyxy"][1] += bh * 0.04
             bz["xyxy"][3] += bh * 0.05
-        # Only keep blacklisted manholes if they were confirmed across at least 2 frames and age <= 8
         self.blacklisted_manholes = [bz for bz in self.blacklisted_manholes if bz["age"] <= 8 and bz["hits"] >= 2]
 
-        # Suppress any candidate detection that lands on a tracked/blacklisted manhole trajectory
         if self.blacklisted_manholes and detections:
             filtered_dets = []
             for d in detections:
@@ -1493,27 +1523,25 @@ class SmoothIoUVideoTracker:
 
         detections = dbscan_single_crater_fusion(detections)
 
-        # 1. Update existing tracks: predict forward position via velocity + perspective expansion
+        # 1. Predict forward position via damped velocity (no runaway corner expansion)
         for t in self.tracks:
             t["time_since_update"] += 1
             vx, vy = t.get("vel", [0.0, 0.0])
-            grow_y = max(0.0, vy) * 0.12
-            grow_x = max(0.0, vy) * 0.08
             t["pred_box"] = [
-                t["xyxy"][0] + 0.90 * vx - grow_x,
-                t["xyxy"][1] + 0.90 * vy - grow_y * 0.2,
-                t["xyxy"][2] + 0.90 * vx + grow_x,
-                t["xyxy"][3] + 0.90 * vy + grow_y,
+                t["xyxy"][0] + 0.80 * vx,
+                t["xyxy"][1] + 0.80 * vy,
+                t["xyxy"][2] + 0.80 * vx,
+                t["xyxy"][3] + 0.80 * vy,
             ]
 
-        # 2. Split detections into high-conf (>=0.28) and low-conf (0.16..0.28)
-        high_dets = [d for d in detections if float(d.get("score", 0.0)) >= 0.28]
-        low_dets = [d for d in detections if 0.16 <= float(d.get("score", 0.0)) < 0.28]
+        # 2. Split detections into high-conf (>=0.30) and low-conf (0.20..0.30)
+        high_dets = [d for d in detections if float(d.get("score", 0.0)) >= 0.30]
+        low_dets = [d for d in detections if 0.20 <= float(d.get("score", 0.0)) < 0.30]
 
         matched_tracks = set()
         matched_high_dets = set()
 
-        # Stage 1: Match high-confidence detections to predicted track positions with Perspective Scale Matching
+        # Stage 1: Match high-confidence detections with Perspective Scale Matching
         if self.tracks and high_dets:
             pairs = []
             for t_idx, track in enumerate(self.tracks):
@@ -1529,18 +1557,18 @@ class SmoothIoUVideoTracker:
                 matched_high_dets.add(d_idx)
                 self._apply_match(self.tracks[t_idx], high_dets[d_idx])
 
-        # Stage 2: Match low-confidence detections (0.16..0.28) to remaining tracks
+        # Stage 2: Match low-confidence detections against remaining confirmed tracks
         matched_low_dets = set()
         remaining_confirmed = [
             (idx, t) for idx, t in enumerate(self.tracks)
-            if idx not in matched_tracks and (t["hits"] >= self.min_hits or t.get("peak_score", 0.0) >= 0.30)
+            if idx not in matched_tracks and (t["hits"] >= self.min_hits or t.get("peak_score", 0.0) >= 0.36)
         ]
         if remaining_confirmed and low_dets:
             pairs = []
             for t_idx, track in remaining_confirmed:
                 for d_idx, det in enumerate(low_dets):
                     sim = _box_perspective_similarity(track["pred_box"], det["xyxy"])
-                    if sim >= (self.iou_threshold * 0.75):
+                    if sim >= (self.iou_threshold * 0.80):
                         pairs.append((sim, t_idx, d_idx))
             pairs.sort(key=lambda x: x[0], reverse=True)
             for _, t_idx, d_idx in pairs:
@@ -1550,31 +1578,24 @@ class SmoothIoUVideoTracker:
                 matched_low_dets.add(d_idx)
                 self._apply_match(self.tracks[t_idx], low_dets[d_idx])
 
-        # Coast unmatched tracks along velocity
+        # Coast unmatched tracks briefly (with texture check so boxes NEVER coast onto empty flat concrete!)
         for t_idx, track in enumerate(self.tracks):
             if t_idx not in matched_tracks:
                 vx, vy = track.get("vel", [0.0, 0.0])
                 track["xyxy"] = list(track["pred_box"])
-                track["vel"] = [0.90 * vx, 0.90 * vy]
-                track["score"] = max(0.18, track["score"] * 0.94)
+                track["vel"] = [0.75 * vx, 0.75 * vy]
+                track["score"] = max(0.18, track["score"] * 0.88)
+                if frame_gray is not None and _is_flat_intact_concrete_or_road_slab(frame_gray, track["xyxy"], track["score"], is_video_stream=True):
+                    track["time_since_update"] = self.max_age + 1
 
-        # Create new candidate tracks from ALL unmatched detections with score >= 0.22
-        all_unmatched = []
+        # Create new candidate tracks from unmatched detections with score >= 0.28
         for d_idx, det in enumerate(high_dets):
-            if d_idx not in matched_high_dets:
-                all_unmatched.append(det)
-        for d_idx, det in enumerate(low_dets):
-            if d_idx not in matched_low_dets:
-                all_unmatched.append(det)
-
-        for det in all_unmatched:
-            det_sc = float(det.get("score", 0.0))
-            if det_sc >= 0.22:
+            if d_idx not in matched_high_dets and float(det.get("score", 0.0)) >= 0.28:
                 self.tracks.append({
                     "id": self.next_id,
                     "xyxy": list(det["xyxy"]),
-                    "score": det_sc,
-                    "peak_score": det_sc,
+                    "score": float(det["score"]),
+                    "peak_score": float(det["score"]),
                     "severity": det.get("severity", "Moderate"),
                     "hits": 1,
                     "time_since_update": 0,
@@ -1586,25 +1607,15 @@ class SmoothIoUVideoTracker:
 
         active = []
         for t in self.tracks:
-            # Confirmed if hits >= 2 or single hit with score >= 0.38
-            is_confirmed = (t["hits"] >= self.min_hits and t["peak_score"] >= 0.24) or t.get("peak_score", 0.0) >= 0.38
-            if is_confirmed and t["time_since_update"] <= 12:
+            # Confirmed if hits >= 2 (peak >= 0.32) OR instant lock-on if score >= 0.42; max coasting display = 3 frames
+            is_confirmed = (t["hits"] >= self.min_hits and t["peak_score"] >= 0.32) or t.get("peak_score", 0.0) >= 0.42
+            if is_confirmed and t["time_since_update"] <= 3:
                 active.append({
                     "id": t["id"],
                     "xyxy": [round(v, 2) for v in t["xyxy"]],
                     "score": round(t["score"], 3),
                     "severity": t["severity"],
                     "class_name": "pothole",
-                    "coasting": t["time_since_update"] > 0,
-                })
-            elif t["time_since_update"] == 0 and t["score"] >= 0.35:
-                active.append({
-                    "id": t["id"],
-                    "xyxy": [round(v, 2) for v in t["xyxy"]],
-                    "score": round(t["score"], 3),
-                    "severity": t["severity"],
-                    "class_name": "pothole",
-                    "coasting": False,
                 })
         return dbscan_single_crater_fusion(active)
 
@@ -1620,7 +1631,7 @@ class SmoothIoUVideoTracker:
         old_vx, old_vy = track.get("vel", [0.0, 0.0])
         track["vel"] = [0.65 * measured_vx + 0.35 * old_vx, 0.65 * measured_vy + 0.35 * old_vy]
         track["xyxy"] = [nx1, ny1, nx2, ny2]
-        track["score"] = 0.75 * float(det["score"]) + 0.25 * float(track["score"])
+        track["score"] = 0.72 * float(det["score"]) + 0.28 * float(track["score"])
         track["peak_score"] = max(float(track.get("peak_score", 0.0)), float(det["score"]))
         track["severity"] = det.get("severity", track.get("severity", "Moderate"))
         track["hits"] += 1
@@ -1628,7 +1639,7 @@ class SmoothIoUVideoTracker:
 
 
 def process_uploaded_video(vname, vbytes, conf_threshold=0.20):
-    '''Annotate an uploaded .mp4/.mov/.avi video with DBSCAN single-crater fusion + Manhole Blacklist + percentage/severity labels.'''
+    '''Annotate an uploaded .mp4/.mov/.avi video with Combined V1-V6 Vision Engine.'''
     work_dir = LOCAL_WORK if "LOCAL_WORK" in globals() else Path("/content")
     in_path = work_dir / vname
     out_path = work_dir / f"bantai_annotated_{Path(vname).stem}.mp4"
@@ -1647,7 +1658,7 @@ def process_uploaded_video(vname, vbytes, conf_threshold=0.20):
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     out = cv2.VideoWriter(str(out_path), fourcc, fps, (width, height))
 
-    tracker = SmoothIoUVideoTracker(iou_threshold=0.18, min_hits=2, max_age=15, alpha=0.82)
+    tracker = SmoothIoUVideoTracker(iou_threshold=0.20, min_hits=2, max_age=6, alpha=0.80)
     frame_idx = 0
     best_preview_pil = None
     best_preview_score_sum = -1.0
@@ -1659,6 +1670,7 @@ def process_uploaded_video(vname, vbytes, conf_threshold=0.20):
         if not ret:
             break
         frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+        frame_gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY).astype(np.float32)
         pil_frame = Image.fromarray(frame_rgb)
 
         smart_dets, rej_manholes = smart_pothole_detect(
@@ -1667,7 +1679,7 @@ def process_uploaded_video(vname, vbytes, conf_threshold=0.20):
             is_video_stream=True,
             return_rejected_manholes=True,
         )
-        active = tracker.update(smart_dets, rejected_manholes=rej_manholes)
+        active = tracker.update(smart_dets, rejected_manholes=rej_manholes, frame_gray=frame_gray)
 
         font_scale = max(0.80, min(width, height) / 720.0)
         font_thick = max(2, round(font_scale * 2.4))
@@ -1707,7 +1719,6 @@ def process_uploaded_video(vname, vbytes, conf_threshold=0.20):
     cap.release()
     out.release()
 
-    # Optional H.264 browser-compatible transcode if ffmpeg is available in Colab
     h264_path = work_dir / f"bantai_h264_{Path(vname).stem}.mp4"
     if shutil.which("ffmpeg"):
         res = subprocess.run(
@@ -1872,6 +1883,150 @@ if RUN_COLAB_WEBCAM:
 else:
     print("Colab webcam is off by default. Set RUN_COLAB_WEBCAM = True to test in Colab, or test locally with:")
     print("  python bantai_pothole_detector.py --weights bantai_pothole_rfdetr_nano_ready.pth --webcam 0 --mode video")
+""")
+
+# --- Section 8D: Package & Export Active Model Bundle (Powered by Cell 8A Vision Engine) ---
+md("""
+## 8D. Package & Export Active Model Bundle (Powered by Cell 8A Vision Engine)
+Exports the currently active fine-tuned `.pth` weights coupled with the **Cell 8A Vision Engine** (`bantai_pothole_detector.py`), writes `model_card.json` and `README.md`, archives them into a `.zip` file on Google Drive, and downloads it directly to your computer.
+""")
+code(r"""# @title 8D. Export Active Model Bundle (Powered by Cell 8A Vision Engine)
+import json
+from pathlib import Path
+import shutil
+import time
+from google.colab import drive, files
+
+if not Path('/content/drive/MyDrive').exists():
+    drive.mount('/content/drive')
+
+# 1. Dynamically locate active model weights
+weights_src = None
+if 'ACTIVE_PTH' in globals() and ACTIVE_PTH and Path(str(ACTIVE_PTH)).is_file():
+    weights_src = Path(str(ACTIVE_PTH))
+elif 'detector' in globals() and hasattr(detector, 'weights_path') and Path(str(detector.weights_path)).is_file():
+    weights_src = Path(str(detector.weights_path))
+elif 'ENHANCED_WEIGHTS_PATH' in globals() and ENHANCED_WEIGHTS_PATH and Path(str(ENHANCED_WEIGHTS_PATH)).is_file():
+    weights_src = Path(str(ENHANCED_WEIGHTS_PATH))
+else:
+    ENH_RUNS_DIR = Path('/content/drive/MyDrive/BANTAI/pothole_enhanced_runs')
+    pths = sorted(ENH_RUNS_DIR.glob('run_v*/*.pth')) if ENH_RUNS_DIR.exists() else []
+    if pths:
+        weights_src = pths[-1]
+    elif Path('/content/drive/MyDrive/BANTAI/pothole_enhanced_model/bantai_pothole_rfdetr_nano_ready.pth').exists():
+        weights_src = Path('/content/drive/MyDrive/BANTAI/pothole_enhanced_model/bantai_pothole_rfdetr_nano_ready.pth')
+
+if not weights_src or not weights_src.is_file():
+    raise FileNotFoundError("Could not find active .pth model weights to package!")
+
+print(f"Packaging Active Weights: {weights_src} ({weights_src.stat().st_size / 1024**2:.1f} MB)")
+
+# 2. Derive run tag and paths
+run_tag = 'latest'
+for part in weights_src.parts:
+    if part.startswith('run_'):
+        run_tag = part.replace('run_', '')
+        break
+if run_tag == 'latest':
+    run_tag = weights_src.stem.replace('bantai_pothole_rfdetr_nano_enhanced_', '').replace('bantai_pothole_rfdetr_nano_', '')
+
+bundle_name = f'BANTAI_Enhanced_Pothole_Model_Bundle_{run_tag}'
+bundle_dir = Path(f'/content/{bundle_name}')
+if bundle_dir.exists():
+    shutil.rmtree(bundle_dir)
+bundle_dir.mkdir(parents=True, exist_ok=True)
+
+# 3. Copy weights to bundle
+target_weights_name = weights_src.name
+shutil.copyfile(weights_src, bundle_dir / target_weights_name)
+
+# 4. Generate standalone bantai_pothole_detector.py with Cell 8A Vision Engine
+if 'generate_enhanced_detector_script' in globals():
+    script_content = generate_enhanced_detector_script(target_weights_name, optimal_confidence=0.20)
+else:
+    from pothole_enhancer_workflow import generate_enhanced_detector_script
+    script_content = generate_enhanced_detector_script(target_weights_name, optimal_confidence=0.20)
+
+(bundle_dir / 'bantai_pothole_detector.py').write_text(script_content, encoding='utf-8')
+
+# 5. Write Model Card
+card_data = {
+    'model_name': f'BANTAI RF-DETR Nano All-Terrain Pothole Detector ({run_tag})',
+    'run_tag': run_tag,
+    'weights_filename': target_weights_name,
+    'vision_engine': 'Cell 8A All-Terrain Vision Engine',
+    'calibrated_operating_threshold': 0.20,
+    'pipeline_components': [
+        'DBSCAN Single-Crater Fusion with Adaptive Crater Rim Context Dilation (18% expansion)',
+        'Universal Manhole Cover & Utility Valve Cap Rejection (OpenCV Contour/Ellipse + Waffle Frequency)',
+        'Dual Overlapping Road Windows for Portrait Videos (Upper-Mid 8%-65% + Lower Road 36%-94%)',
+        'ByteTrack 2-Stage Multi-Object Video Tracking with Downward Perspective Drift & Horizon Alignment',
+        'Velocity-Predicted Coasting (max_age=15 frames) with Auto-Expansion',
+        'Weathered White Paint & Sunlit Road Surface Rejector',
+        'Concrete Slab Dark Asphalt Patch & Spall Cavity Recovery',
+        'CIE-LAB CLAHE Equalization + Multi-Tile Road Analysis',
+    ],
+    'export_timestamp': time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime()),
+}
+(bundle_dir / 'model_card.json').write_text(json.dumps(card_data, indent=2), encoding='utf-8')
+
+# 6. Write README.md
+readme_lines = [
+    f"# BANTAI Enhanced Pothole Detection Model ({run_tag})",
+    "",
+    "This model bundle contains the fine-tuned RF-DETR Nano model and the Cell 8A Vision Engine for robust real-world pothole detection on asphalt and concrete roads.",
+    "",
+    "## Files in this Bundle",
+    f"- `{target_weights_name}`: Trained model weights checkpoint (.pth).",
+    "- `bantai_pothole_detector.py`: Standalone inference engine with DBSCAN crater fusion, anti-manhole filtering, and perspective video tracking.",
+    "- `model_card.json`: Model metadata, architecture, and pipeline configuration.",
+    "",
+    "## Python Usage",
+    "```python",
+    "from bantai_pothole_detector import PotholeDetector",
+    "",
+    f"detector = PotholeDetector(weights_path='{target_weights_name}', confidence=0.20)",
+    "",
+    "# Photo mode",
+    "results = detector.detect('road_photo.jpg', mode='photo')",
+    "print(results)",
+    "",
+    "# Video stream mode",
+    "results = detector.detect('frame.jpg', mode='video')",
+    "```",
+    "",
+    "## CLI Usage",
+    "```bash",
+    "# Process a video",
+    "python bantai_pothole_detector.py --source walking_test.mp4 --output annotated.mp4",
+    "",
+    "# Process a photo",
+    "python bantai_pothole_detector.py --image road.jpg --mode photo",
+    "",
+    "# Live Webcam",
+    "python bantai_pothole_detector.py --webcam 0",
+    "```",
+]
+(bundle_dir / 'README.md').write_text('\n'.join(readme_lines), encoding='utf-8')
+
+# 7. Create ZIP archive
+zip_base = Path(f'/content/{bundle_name}')
+zip_path = Path(shutil.make_archive(str(zip_base), 'zip', bundle_dir))
+
+# 8. Copy ZIP archive to Drive folder alongside weights
+drive_target_dir = weights_src.parent
+shutil.copyfile(zip_path, drive_target_dir / zip_path.name)
+print("=" * 74)
+print(f"MODEL BUNDLE PACKAGED SUCCESSFULLY: {zip_path.name} ({zip_path.stat().st_size / 1024**2:.1f} MB)")
+print(f"Saved to Google Drive: {drive_target_dir / zip_path.name}")
+print("=" * 74)
+
+# 9. Download directly to browser
+try:
+    files.download(str(zip_path))
+    print("Browser download triggered!")
+except Exception as exc:
+    print(f"Download manually from Drive: {drive_target_dir / zip_path.name}")
 """)
 
 # --- Validate all code cells with AST before writing ---

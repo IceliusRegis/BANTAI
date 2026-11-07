@@ -2,6 +2,7 @@
 
 Implements:
 - Section 6.2 Unified Dual-Model Response Schema (Model A Trash + Model B Road Defects)
+- Universal 0-100% normalized box coordinates (box_pct) for clean responsive UI rendering
 - Section 6.3 Calibrated Municipal Hotspot Scoring Formula:
     H = min(100, W_pile * N_pile + W_group * N_group + W_litter * N_litter + W_pothole * N_pothole)
 """
@@ -89,12 +90,49 @@ def fuse_dual_model_incident(
         total_groups += r_counts.get("groups_of_litter", 0)
         total_litter += r_counts.get("individual_items", 0)
 
-        for d in road.get("defects", []):
+        combined_boxes = []
+
+        # Process Road Potholes
+        pothole_defects = road.get("defects", [])
+        for d in pothole_defects:
             sev = str(d.get("severity", "moderate")).lower()
             if sev in potholes_by_severity:
                 potholes_by_severity[sev] += 1
             else:
                 potholes_by_severity["moderate"] += 1
+
+            b_box_pct = d.get("box_pct", {"x": 42.0, "y": 65.0, "w": 16.0, "h": 11.0})
+            b_conf_pct = d.get("confidence_pct", int(d.get("confidence", 0.8) * 100))
+            combined_boxes.append({
+                "id": f"pothole-{d.get('defect_id', len(combined_boxes)+1)}",
+                "kind": "pothole",
+                "label": "Pothole",
+                "severity": d.get("severity", "moderate"),
+                "confidence_pct": b_conf_pct,
+                "confidencePct": b_conf_pct,
+                "count": 1,
+                "box_pct": b_box_pct,
+                "boxPct": b_box_pct,
+                "estimated_diameter_cm": d.get("estimated_diameter_cm", 35.0),
+            })
+
+        # Process Trash Regions
+        trash_regions = trash.get("region_list", [])
+        for r in trash_regions:
+            t_box_pct = r.get("box_pct", {"x": 36.0, "y": 58.0, "w": 22.0, "h": 16.0})
+            t_conf_pct = r.get("confidence_pct", 88)
+            combined_boxes.append({
+                "id": f"trash-{r.get('region_id', len(combined_boxes)+1)}",
+                "kind": "trash",
+                "label": r.get("display_label", "Trash"),
+                "category": r.get("category", "individual_litter"),
+                "confidence_pct": t_conf_pct,
+                "confidencePct": t_conf_pct,
+                "count": r.get("item_count", 1),
+                "box_pct": t_box_pct,
+                "boxPct": t_box_pct,
+                "category_breakdown": r.get("category_breakdown", {}),
+            })
 
         frame_url = f"{media_url_prefix}/{incident_id}/frames/{entry['file_name']}"
 
@@ -106,6 +144,9 @@ def fuse_dual_model_incident(
             "height": entry.get("height", 720),
             "trash_findings": trash,
             "road_defect_findings": road,
+            "boxes": combined_boxes,
+            "pothole_count": len(pothole_defects),
+            "trash_count": sum(r.get("item_count", 1) for r in trash_regions),
         })
 
     # Calculate overall incident Hotspot Score
@@ -120,9 +161,16 @@ def fuse_dual_model_incident(
     has_high_pothole = potholes_by_severity.get("high", 0) > 0
     priority_level, dispatch_recommendation = determine_priority_and_dispatch(hotspot_score, has_pile, has_high_pothole)
 
+    is_video = media_meta.get("type") == "video"
+    preview_video_url = f"{media_url_prefix}/{incident_id}/preview.mp4" if is_video else None
+
+    total_potholes = sum(potholes_by_severity.values())
+    total_trash_items = (total_piles * 8) + (total_groups * 3) + total_litter
+
     return {
         "incident_id": incident_id,
         "source_media": media_meta,
+        "preview_video_url": preview_video_url,
         "location": {
             "street_name": location_str,
             "latitude": 14.653889,   # Pilot Santa Elena, Marikina default
@@ -133,10 +181,11 @@ def fuse_dual_model_incident(
         "dispatch_recommendation": dispatch_recommendation,
         "summary": {
             "total_frames": len(frame_entries),
+            "total_potholes": total_potholes,
+            "total_trash_items": total_trash_items,
             "total_garbage_piles": total_piles,
             "total_litter_groups": total_groups,
             "total_individual_litter": total_litter,
-            "total_potholes": sum(potholes_by_severity.values()),
             "potholes_by_severity": potholes_by_severity,
         },
         "frames": frames_output,

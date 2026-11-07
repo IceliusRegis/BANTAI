@@ -4,6 +4,36 @@ export const locations = ['J. P. Rizal St. near Market', 'Shoe Avenue corner E. 
 export const incidentStatuses = ['Open', 'For inspection', 'In progress', 'Resolved'] as const
 export type IncidentStatus = typeof incidentStatuses[number]
 
+export type UiBoxPct = {
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
+export type UiDetectionBox = {
+  id: string
+  kind: 'pothole' | 'trash'
+  label: string
+  category?: string
+  severity?: 'low' | 'moderate' | 'high' | 'critical'
+  confidencePct: number
+  count: number
+  boxPct: UiBoxPct
+  estimatedDiameterCm?: number
+  categoryBreakdown?: Record<string, number>
+}
+
+export type UiVideoFrame = {
+  frameIndex: number
+  timestampSec: number
+  clipTime: string
+  frameUrl: string
+  boxes: UiDetectionBox[]
+  potholeCount: number
+  trashCount: number
+}
+
 export type TrashDetection = {
   detection_id: number
   category_id: number
@@ -11,6 +41,7 @@ export type TrashDetection = {
   bantai_category: string
   model_score: number
   bbox: [number, number, number, number]
+  box_pct?: UiBoxPct
 }
 
 export type TrashRegion = {
@@ -19,7 +50,9 @@ export type TrashRegion = {
   display_label: string
   item_count: number
   bbox: [number, number, number, number]
+  box_pct?: UiBoxPct
   model_score: number | null
+  confidence_pct?: number
   member_indices: number[]
   category_breakdown?: Record<string, number>
 }
@@ -40,10 +73,13 @@ export type TrashFindings = {
 export type RoadDefect = {
   defect_id: number
   type: 'pothole'
-  severity: 'low' | 'moderate' | 'high'
+  label?: string
+  severity: 'low' | 'moderate' | 'high' | 'critical'
   estimated_diameter_cm: number
   bbox: [number, number, number, number]
+  box_pct?: UiBoxPct
   confidence: number
+  confidence_pct?: number
 }
 
 export type RoadDefectFindings = {
@@ -60,6 +96,9 @@ export type DualModelFrameResult = {
   height?: number
   trash_findings: TrashFindings
   road_defect_findings: RoadDefectFindings
+  boxes?: UiDetectionBox[]
+  pothole_count?: number
+  trash_count?: number
 }
 
 export type UnifiedIncidentResponse = {
@@ -70,6 +109,7 @@ export type UnifiedIncidentResponse = {
     fps?: number
     duration_sec?: number
   }
+  preview_video_url?: string | null
   location: {
     street_name: string
     latitude: number
@@ -80,24 +120,41 @@ export type UnifiedIncidentResponse = {
   dispatch_recommendation: string
   summary?: {
     total_frames: number
+    total_potholes: number
+    total_trash_items: number
     total_garbage_piles: number
     total_litter_groups: number
     total_individual_litter: number
-    total_potholes: number
   }
   frames: DualModelFrameResult[]
 }
 
 export type Observation = {
-  id: string; reporter: string; source: 'Resident photo' | 'Video observation'; location: string;
-  category: Category; observedAt: string; submittedAt: string; description: string;
-  photo?: string; clipTime?: string; confidence: number;
-  review: 'Pending review' | 'Validated' | 'Rejected'; incidentId?: string; reviewNote: string;
-  dualModelResult?: UnifiedIncidentResponse;
-  regions?: TrashRegion[];
-  defects?: RoadDefect[];
-  hotspotScore?: number;
-  priorityLevel?: 'CRITICAL' | 'ELEVATED' | 'ROUTINE';
+  id: string
+  reporter: string
+  source: 'Resident photo' | 'Video observation'
+  location: string
+  category: Category
+  observedAt: string
+  submittedAt: string
+  description: string
+  photo?: string
+  clipTime?: string
+  confidence: number
+  review: 'Pending review' | 'Validated' | 'Rejected'
+  incidentId?: string
+  reviewNote: string
+  mediaType?: 'image' | 'video'
+  boxes?: UiDetectionBox[]
+  frames?: UiVideoFrame[]
+  potholeCount?: number
+  trashCount?: number
+  previewVideoUrl?: string
+  dualModelResult?: UnifiedIncidentResponse
+  regions?: TrashRegion[]
+  defects?: RoadDefect[]
+  hotspotScore?: number
+  priorityLevel?: 'CRITICAL' | 'ELEVATED' | 'ROUTINE'
 }
 
 export function computeHotspotScore(
@@ -120,7 +177,20 @@ export function computeHotspotScore(
 export type Incident = { id: string; category: Category; location: string; status: IncidentStatus; note: string; updatedAt: string }
 export type Store = { observations: Observation[]; incidents: Incident[] }
 export type RankedIncident = Incident & { frequency: number; latest: string }
-export type NewReport = Pick<Observation, 'location' | 'category' | 'observedAt' | 'description' | 'photo'>
+export type NewReport = Pick<Observation, 'location' | 'category' | 'observedAt' | 'description' | 'photo'> & {
+  mediaType?: 'image' | 'video'
+  boxes?: UiDetectionBox[]
+  frames?: UiVideoFrame[]
+  potholeCount?: number
+  trashCount?: number
+  previewVideoUrl?: string
+  dualModelResult?: UnifiedIncidentResponse
+  regions?: TrashRegion[]
+  defects?: RoadDefect[]
+  hotspotScore?: number
+  priorityLevel?: 'CRITICAL' | 'ELEVATED' | 'ROUTINE'
+}
+
 export const residentId = 'Demo resident'
 export function normalizeLocation(value: string) { return value.trim().replace(/\s+/g, ' ').toLowerCase() }
 
@@ -135,15 +205,79 @@ export function seedStore(now = new Date()): Store {
   const observations: Observation[] = []
   for (const [index, incident] of incidents.entries()) {
     const count = [4, 3, 3, 2][index]
-    for (let n = 0; n < count; n++) observations.push({
-      id: `OBS-${String(observations.length + 1).padStart(3, '0')}`,
-      reporter: n === 0 ? residentId : 'Sample resident', source: 'Resident photo',
-      location: incident.location, category: incident.category, observedAt: ago(3 + index * 3 + n * 20), submittedAt: ago(2 + index * 3 + n * 20),
-      description: `Sample observation of ${incident.category.toLowerCase()} near this location.`,
-      confidence: 90 - n, review: 'Validated', incidentId: incident.id, reviewNote: 'Validated by barangay admin.',
-    })
+    for (let n = 0; n < count; n++) {
+      const isPothole = incident.category === 'Pothole'
+      const sampleBoxes: UiDetectionBox[] = isPothole ? [
+        {
+          id: `box-pot-${n}`,
+          kind: 'pothole',
+          label: 'Pothole',
+          severity: 'moderate',
+          confidencePct: 90 - n,
+          count: 1,
+          boxPct: { x: 38 + n * 4, y: 55 + n * 3, w: 18, h: 12 },
+          estimatedDiameterCm: 36.5,
+        }
+      ] : [
+        {
+          id: `box-tr-${n}`,
+          kind: 'trash',
+          label: 'Garbage Pile',
+          category: 'garbage_pile',
+          confidencePct: 92 - n,
+          count: 4,
+          boxPct: { x: 32 + n * 3, y: 52 + n * 4, w: 24, h: 18 },
+        }
+      ]
+
+      observations.push({
+        id: `OBS-${String(observations.length + 1).padStart(3, '0')}`,
+        reporter: n === 0 ? residentId : 'Sample resident', source: 'Resident photo',
+        location: incident.location, category: incident.category, observedAt: ago(3 + index * 3 + n * 20), submittedAt: ago(2 + index * 3 + n * 20),
+        description: `Sample observation of ${incident.category.toLowerCase()} near this location.`,
+        confidence: 90 - n, review: 'Validated', incidentId: incident.id, reviewNote: 'Validated by barangay admin.',
+        mediaType: 'image',
+        boxes: sampleBoxes,
+        potholeCount: isPothole ? 1 : 0,
+        trashCount: isPothole ? 0 : 4,
+        hotspotScore: isPothole ? 62.5 : 85.0,
+        priorityLevel: isPothole ? 'ELEVATED' : 'CRITICAL',
+      })
+    }
   }
-  observations.unshift({ id: 'OBS-013', reporter: 'Sample resident', source: 'Resident photo', location: locations[0], category: 'Garbage pile', observedAt: ago(1), submittedAt: ago(.5), description: 'Another observation of piled garbage beside the market entrance. Please check whether this is the existing incident.', confidence: 93, review: 'Pending review', reviewNote: '' })
+
+  // Pending user observation
+  observations.unshift({
+    id: 'OBS-013',
+    reporter: 'Sample resident',
+    source: 'Resident photo',
+    location: locations[0],
+    category: 'Garbage pile',
+    observedAt: ago(1),
+    submittedAt: ago(0.5),
+    description: 'Piled garbage and plastic litter beside the market entrance. Please check whether this is the existing incident.',
+    confidence: 93,
+    review: 'Pending review',
+    reviewNote: '',
+    mediaType: 'image',
+    boxes: [
+      {
+        id: 'box-p13',
+        kind: 'trash',
+        label: 'Garbage Pile',
+        category: 'garbage_pile',
+        confidencePct: 93,
+        count: 5,
+        boxPct: { x: 34, y: 50, w: 28, h: 22 },
+        categoryBreakdown: { Plastic: 3, Paper: 2 },
+      }
+    ],
+    potholeCount: 0,
+    trashCount: 5,
+    hotspotScore: 85.0,
+    priorityLevel: 'CRITICAL',
+  })
+
   return { incidents, observations }
 }
 
@@ -155,12 +289,47 @@ export function rankIncidents(store: Store): RankedIncident[] {
   }).filter(i => i.frequency > 0).sort((a, b) => b.frequency - a.frequency || b.latest.localeCompare(a.latest) || a.id.localeCompare(b.id))
 }
 
-export function rankHotspots(store: Store) {
-  const groups = new Map<string, { location: string; frequency: number; latest: string; incidents: number }>()
+export type HotspotRanking = {
+  location: string
+  frequency: number
+  latest: string
+  incidents: number
+  potholesCount: number
+  trashCount: number
+  priorityLevel: 'Urgent' | 'High' | 'Moderate'
+}
+
+export function rankHotspots(store: Store): HotspotRanking[] {
+  const groups = new Map<string, HotspotRanking>()
   for (const incident of rankIncidents(store)) {
     const key = normalizeLocation(incident.location)
-    const previous = groups.get(key) || { location: incident.location, frequency: 0, latest: '', incidents: 0 }
-    groups.set(key, { location: previous.location, frequency: previous.frequency + incident.frequency, latest: previous.latest > incident.latest ? previous.latest : incident.latest, incidents: previous.incidents + 1 })
+    const previous = groups.get(key) || {
+      location: incident.location,
+      frequency: 0,
+      latest: '',
+      incidents: 0,
+      potholesCount: 0,
+      trashCount: 0,
+      priorityLevel: 'Moderate',
+    }
+
+    const validated = store.observations.filter(o => o.review === 'Validated' && normalizeLocation(o.location) === key)
+    const pCount = validated.reduce((sum, o) => sum + (o.potholeCount || (o.category === 'Pothole' ? 1 : 0)), 0)
+    const tCount = validated.reduce((sum, o) => sum + (o.trashCount || (o.category === 'Garbage pile' ? 3 : 0)), 0)
+
+    const priorityLevel = (pCount >= 2 || tCount >= 5 || validated.length >= 4)
+      ? 'Urgent'
+      : (validated.length >= 2 ? 'High' : 'Moderate')
+
+    groups.set(key, {
+      location: previous.location,
+      frequency: previous.frequency + incident.frequency,
+      latest: previous.latest > incident.latest ? previous.latest : incident.latest,
+      incidents: previous.incidents + 1,
+      potholesCount: pCount,
+      trashCount: tCount,
+      priorityLevel,
+    })
   }
   return [...groups.values()].sort((a, b) => b.frequency - a.frequency || b.latest.localeCompare(a.latest) || a.location.localeCompare(b.location))
 }
@@ -170,7 +339,18 @@ export function duplicateCandidates(store: Store, report: Observation) {
 }
 
 export function addResidentReport(store: Store, report: NewReport, id: string, now: string): Store {
-  const observation: Observation = { ...report, location: report.location.trim(), description: report.description.trim(), id, submittedAt: now, reporter: residentId, source: 'Resident photo', confidence: 92, review: 'Pending review', reviewNote: '' }
+  const observation: Observation = {
+    ...report,
+    location: report.location.trim(),
+    description: report.description.trim(),
+    id,
+    submittedAt: now,
+    reporter: residentId,
+    source: report.mediaType === 'video' ? 'Video observation' : 'Resident photo',
+    confidence: report.confidence || 92,
+    review: 'Pending review',
+    reviewNote: '',
+  }
   return { ...store, observations: [observation, ...store.observations] }
 }
 
@@ -196,11 +376,53 @@ export function updateIncident(store: Store, id: string, status: IncidentStatus,
 }
 
 export function addVideoObservations(store: Store, location: string, category: Category, now: string, batch: string): Store {
-  const observations: Observation[] = ['00:04', '00:12', '00:23'].map((clipTime, index) => ({
-    id: `VID-${batch}-${index + 1}`, source: 'Video observation', reporter: 'Demo camera', location, category,
-    observedAt: new Date(new Date(now).getTime() - (23 - [4, 12, 23][index]) * 1000).toISOString(), submittedAt: now,
-    description: `Simulated ${category.toLowerCase()} observation at clip position ${clipTime}. Review before counting toward incident frequency.`,
-    clipTime, confidence: [89, 94, 91][index], review: 'Pending review', reviewNote: '',
-  }))
+  const isPothole = category === 'Pothole'
+  const observations: Observation[] = ['00:04', '00:12', '00:23'].map((clipTime, index) => {
+    const sec = [4, 12, 23][index]
+    const boxes: UiDetectionBox[] = isPothole ? [
+      {
+        id: `pot-${batch}-${index + 1}`,
+        kind: 'pothole',
+        label: 'Pothole',
+        severity: index === 1 ? 'high' : 'moderate',
+        confidencePct: [89, 94, 91][index],
+        count: 1,
+        boxPct: { x: 40 + index * 2, y: 62 + index * 2, w: 18, h: 12 },
+        estimatedDiameterCm: 42.0,
+      }
+    ] : [
+      {
+        id: `tr-${batch}-${index + 1}`,
+        kind: 'trash',
+        label: index === 0 ? 'Plastic Litter' : 'Garbage Pile',
+        category: index === 0 ? 'individual_litter' : 'garbage_pile',
+        confidencePct: [88, 93, 90][index],
+        count: index === 0 ? 1 : 4,
+        boxPct: { x: 35 + index * 3, y: 55 + index * 2, w: 22, h: 16 },
+      }
+    ]
+
+    return {
+      id: `VID-${batch}-${index + 1}`,
+      source: 'Video observation',
+      reporter: 'Street Patrol Camera',
+      location,
+      category,
+      observedAt: new Date(new Date(now).getTime() - (23 - [4, 12, 23][index]) * 1000).toISOString(),
+      submittedAt: now,
+      description: `Simulated ${category.toLowerCase()} observation at clip position ${clipTime}. Review before counting toward incident frequency.`,
+      clipTime,
+      confidence: [89, 94, 91][index],
+      review: 'Pending review',
+      reviewNote: '',
+      mediaType: 'video',
+      boxes,
+      potholeCount: isPothole ? 1 : 0,
+      trashCount: isPothole ? 0 : (index === 0 ? 1 : 4),
+      hotspotScore: isPothole ? 62.5 : 85.0,
+      priorityLevel: isPothole ? 'ELEVATED' : 'CRITICAL',
+    }
+  })
+
   return { ...store, observations: [...observations, ...store.observations] }
 }

@@ -3,6 +3,7 @@ dist/
 build/
 .cache/
 .env*
+.venv/
 .vite/
 vite.config.*.timestamp-*
 *.tsbuildinfo
@@ -43,9 +44,11 @@ Desktop.ini
 runs/
 extracted_frames/
 server/media_storage/
+BANTAI_Enhanced_Pothole_Model_Bundle*/
 __pycache__/
 *.pyc
 *.safetensors
 *.pth
 *.pt
 
+*.zip

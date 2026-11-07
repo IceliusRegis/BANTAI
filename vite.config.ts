@@ -43,6 +43,10 @@ react(),
       watch: {
         ignored: [
           '**/.figma/**',
+          '**/server/**',
+          '**/colab/**',
+          '**/BANTAI_Enhanced_Pothole_Model_Bundle*/**',
+          '**/media_storage/**',
 ],
       },
     },

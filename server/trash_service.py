@@ -170,18 +170,29 @@ class BantaiTrashService:
         detections: List[Dict[str, Any]],
         grouping: Dict[str, Any],
     ) -> Dict[str, Any]:
-        """Formats output to match ARGON_WEBSITE_INTEGRATION_GUIDE.md Section 6.1 and 6.2."""
+        """Formats output to match Section 6.1 and 6.2 with 0-100% box_pct."""
+        w, h = entry.get("width", 1280), entry.get("height", 720)
         formatted_detections = []
         for idx, row in enumerate(detections):
             cid = int(row.get("category_id", 0))
             cid = cid if cid in SUPERVISED_LABELS else 1  # Fallback to plastic_bottle
+            dx, dy, dbw, dbh = [float(c) for c in row.get("bbox", [0, 0, 0, 0])]
+            box_pct = {
+                "x": round((dx / float(max(1, w))) * 100.0, 2),
+                "y": round((dy / float(max(1, h))) * 100.0, 2),
+                "w": round((dbw / float(max(1, w))) * 100.0, 2),
+                "h": round((dbh / float(max(1, h))) * 100.0, 2),
+            }
+            score_f = round(float(row.get("score", 0.0)), 4)
             formatted_detections.append({
                 "detection_id": idx + 1,
                 "category_id": cid,
                 "label": SUPERVISED_LABELS.get(cid, "plastic_bottle"),
                 "bantai_category": CANONICAL_CATEGORIES.get(cid, "Plastic"),
-                "model_score": round(float(row.get("score", 0.0)), 4),
-                "bbox": [round(float(c), 2) for c in row.get("bbox", [0, 0, 0, 0])],
+                "model_score": score_f,
+                "confidence_pct": round(score_f * 100),
+                "bbox": [round(dx, 2), round(dy, 2), round(dbw, 2), round(dbh, 2)],
+                "box_pct": box_pct,
             })
 
         formatted_regions = []
@@ -199,14 +210,23 @@ class BantaiTrashService:
 
             # D-112 Rule: model_score is float only for k = 1; strictly null for k >= 2
             score_val = round(float(reg["model_score"]), 4) if (k == 1 and reg.get("model_score") is not None) else None
+            rx, ry, rbw, rbh = [float(c) for c in reg.get("bbox", [0, 0, 0, 0])]
+            box_pct = {
+                "x": round((rx / float(max(1, w))) * 100.0, 2),
+                "y": round((ry / float(max(1, h))) * 100.0, 2),
+                "w": round((rbw / float(max(1, w))) * 100.0, 2),
+                "h": round((rbh / float(max(1, h))) * 100.0, 2),
+            }
 
             formatted_regions.append({
                 "region_id": int(reg.get("group_id", 0)) + 1,
                 "category": cat,
                 "display_label": reg.get("label", cat.replace("_", " ").title()),
                 "item_count": k,
-                "bbox": [round(float(c), 2) for c in reg.get("bbox", [0, 0, 0, 0])],
+                "bbox": [round(rx, 2), round(ry, 2), round(rbw, 2), round(rbh, 2)],
+                "box_pct": box_pct,
                 "model_score": score_val,
+                "confidence_pct": round(score_val * 100) if score_val is not None else 88,
                 "member_indices": member_indices,
                 "category_breakdown": category_breakdown,
             })
@@ -243,7 +263,6 @@ class BantaiTrashService:
         results = []
         for entry in frame_entries:
             w, h = entry.get("width", 1280), entry.get("height", 720)
-            # Default realistic sample detections
             sample_dets = [
                 {"category_id": 1, "score": 0.88, "bbox": [w * 0.38, h * 0.58, w * 0.08, h * 0.12]},
                 {"category_id": 3, "score": 0.74, "bbox": [w * 0.42, h * 0.62, w * 0.06, h * 0.08]},

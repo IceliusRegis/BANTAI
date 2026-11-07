@@ -1356,21 +1356,26 @@ class EnhancedPotholeDetector:
 # ---------------------------------------------------------------------------
 
 def generate_enhanced_detector_script(weights_filename: str = DEFAULT_WEIGHTS_NAME, optimal_confidence: float = DEFAULT_CONFIDENCE) -> str:
-    """Generate the complete, zero-dependency bantai_pothole_detector.py standalone script."""
-    return f'''"""BANTAI Enhanced Pothole Detector — Standalone Inference Engine.
+    """Generate the complete, zero-dependency bantai_pothole_detector.py standalone script (Cell 8A Vision Engine)."""
+    return f'''"""BANTAI Enhanced Pothole Detector — Standalone Inference Engine (Cell 8A Vision Engine).
 
-Supports both Real-Time Video/Webcam (50-60+ FPS) and High-Accuracy Photo Inspection.
-Embedded Calibrated Operating Threshold: {optimal_confidence:.3f}
+Includes:
+- DBSCAN Single-Crater Fusion with Adaptive Crater Rim Context Dilation
+- Universal Manhole Cover & Utility Valve Cap Rejection (OpenCV Contour/Ellipse + Waffle Frequency)
+- Dual Overlapping Road Windows for Portrait Videos (Upper-Mid 8%-65% + Lower Road 36%-94%)
+- ByteTrack 2-Stage Multi-Object Video Tracking with Downward Perspective Drift & Horizon Alignment
+- CIE-LAB CLAHE Equalization + Road-SAHI Analysis
 """
 from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import sys
 import time
 from typing import Any, Dict, List, Optional, Tuple, Union
 import cv2
 import numpy as np
-from PIL import Image, ImageOps
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 import torch
 from rfdetr import RFDETR
 
@@ -1379,9 +1384,23 @@ DEFAULT_CONFIDENCE = {optimal_confidence:.3f}
 
 
 def box_iou(a: List[float], b: List[float]) -> float:
-    inter = max(0.0, min(a[2], b[2]) - max(a[0], b[0])) * max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
-    union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
-    return inter / union if union > 0.0 else 0.0
+    ix1, iy1 = max(a[0], b[0]), max(a[1], b[1])
+    ix2, iy2 = min(a[2], b[2]), min(a[3], b[3])
+    inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
+    area_a = max(1.0, (a[2] - a[0]) * (a[3] - a[1]))
+    area_b = max(1.0, (b[2] - b[0]) * (b[3] - b[1]))
+    return inter / (area_a + area_b - inter) if (area_a + area_b - inter) > 0 else 0.0
+
+
+def box_iomin(a: List[float], b: List[float]) -> float:
+    ix1, iy1 = max(a[0], b[0]), max(a[1], b[1])
+    ix2, iy2 = min(a[2], b[2]), min(a[3], b[3])
+    inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
+    min_area = min(
+        max(1.0, (a[2] - a[0]) * (a[3] - a[1])),
+        max(1.0, (b[2] - b[0]) * (b[3] - b[1])),
+    )
+    return inter / min_area
 
 
 def apply_lab_clahe(img: Image.Image) -> Image.Image:
@@ -1396,138 +1415,459 @@ def apply_lab_clahe(img: Image.Image) -> Image.Image:
         return img
 
 
-def generate_road_sahi_tiles(img: Image.Image, horizon_ratio: float = 0.25, grid: Tuple[int, int] = (2, 2), overlap: float = 0.25, include_focal_tile: bool = True):
-    w, h = img.size
-    is_wide_dashcam = (w / float(max(1, h))) >= 1.50
-    road_top = int(h * horizon_ratio)
-    road_bottom = int(h * 0.78) if is_wide_dashcam else h
-    road_right = int(w * 0.87) if is_wide_dashcam else w
-    road_h = road_bottom - road_top
-    if road_h <= 32 or road_right <= 32:
-        return [(img, (0, 0, w, h))]
-    cols, rows = grid
-    step_x = int(road_right / (cols - (cols - 1) * overlap)) if cols > 1 else road_right
-    step_y = int(road_h / (rows - (rows - 1) * overlap)) if rows > 1 else road_h
-    tile_w = min(road_right, max(64, step_x))
-    tile_h = min(road_h, max(64, step_y))
-    tiles = []
-    x_coords = np.linspace(0, max(0, road_right - tile_w), cols, dtype=int)
-    y_coords = np.linspace(road_top, max(road_top, road_bottom - tile_h), rows, dtype=int)
-    for y in y_coords:
-        for x in x_coords:
-            crop_box = (int(x), int(y), int(min(road_right, x + tile_w)), int(min(road_bottom, y + tile_h)))
-            tiles.append((img.crop(crop_box), (crop_box[0], crop_box[1], crop_box[2] - crop_box[0], crop_box[3] - crop_box[1])))
-    if include_focal_tile:
-        fx0, fy0, fx1, fy1 = int(w * 0.15), int(h * max(0.25, horizon_ratio - 0.05)), int(min(road_right, w * 0.85)), int(min(road_bottom, h * 0.78))
-        if fx1 > fx0 + 32 and fy1 > fy0 + 32:
-            tiles.append((img.crop((fx0, fy0, fx1, fy1)), (fx0, fy0, fx1 - fx0, fy1 - fy0)))
-    return tiles
+def estimate_pothole_severity(box: List[float], img_width: int, img_height: int, score: float) -> str:
+    bw = max(1.0, box[2] - box[0])
+    bh = max(1.0, box[3] - box[1])
+    area_ratio = (bw * bh) / float(max(1, img_width * img_height))
+    if area_ratio >= 0.035 or (area_ratio >= 0.02 and score >= 0.85):
+        return "Critical"
+    elif area_ratio >= 0.01 or (area_ratio >= 0.005 and score >= 0.70):
+        return "Moderate"
+    else:
+        return "Low"
 
 
-def remap_tile_boxes(detections: List[Dict[str, Any]], offset: Tuple[int, int, int, int]) -> List[Dict[str, Any]]:
-    off_x, off_y, _, _ = offset
-    return [
-        {{"xyxy": [b[0] + off_x, b[1] + off_y, b[2] + off_x, b[3] + off_y], "score": d["score"], "class_name": "pothole", "source": "sahi_tile"}}
-        for d in detections for b in [d["xyxy"]]
-    ]
-
-
-def compute_laplacian_edge_roughness(gray_arr: np.ndarray, box: List[float]) -> float:
-    h, w = gray_arr.shape
-    bw, bh = max(1.0, box[2] - box[0]), max(1.0, box[3] - box[1])
-    mx, my = int(bw * 0.12), int(bh * 0.12)
-    x1, y1 = max(0, int(box[0]) - mx), max(0, int(box[1]) - my)
-    x2, y2 = min(w, int(box[2]) + mx), min(h, int(box[3]) + my)
+def is_roadside_litter_or_leaf(rgb_arr: np.ndarray, box: List[float], score: float) -> bool:
+    h, w, _ = rgb_arr.shape
+    x1, y1, x2, y2 = [max(0, int(v)) for v in box]
+    x2, y2 = min(w, x2), min(h, y2)
     if x2 <= x1 + 4 or y2 <= y1 + 4:
-        return 1.0
-    crop = gray_arr[y1:y2, x1:x2].astype(np.float32)
-    edges = crop[1:-1, 0:-2] + crop[1:-1, 2:] + crop[0:-2, 1:-1] + crop[2:, 1:-1] - 4.0 * crop[1:-1, 1:-1]
-    if edges.size == 0:
-        return 0.0
-    full_var = float(edges.var())
-    eh, ew = edges.shape
-    if eh >= 12 and ew >= 12:
-        rim_mask = np.ones((eh, ew), dtype=bool)
-        iy1, iy2 = int(eh * 0.22), int(eh * 0.78)
-        ix1, ix2 = int(ew * 0.22), int(ew * 0.78)
-        rim_mask[iy1:iy2, ix1:ix2] = False
-        rim_edges = edges[rim_mask]
-        rim_var = float(rim_edges.var()) if rim_edges.size > 0 else 0.0
-        return max(full_var, rim_var)
-    return full_var
+        return True
+
+    crop = rgb_arr[y1:y2, x1:x2]
+    hsv = cv2.cvtColor(crop.astype(np.uint8), cv2.COLOR_RGB2HSV).astype(np.float32)
+    sat_mean = float(hsv[..., 1].mean())
+    sat_p85 = float(np.percentile(hsv[..., 1], 85))
+    val_p90 = float(np.percentile(hsv[..., 2], 90))
+
+    if score < 0.65:
+        if sat_mean > 48.0 or sat_p85 > 78.0:
+            return True
+        area_ratio = ((x2 - x1) * (y2 - y1)) / float(max(1, w * h))
+        if area_ratio < 0.015 and val_p90 > 225.0 and sat_p85 > 35.0 and score < 0.48:
+            return True
+        val_p10 = float(np.percentile(hsv[..., 2], 10))
+        val_p85 = float(np.percentile(hsv[..., 2], 85))
+        if area_ratio < 0.015 and score < 0.48:
+            if val_p85 >= 210.0 and val_p10 >= 100.0:
+                return True
+    return False
 
 
-def weighted_boxes_fusion(detections: List[Dict[str, Any]], iou_threshold: float = 0.55) -> List[Dict[str, Any]]:
-    if not detections:
+def has_clean_ellipse_or_convex_manhole_rim(patch_u8: np.ndarray, aspect: float) -> bool:
+    ph, pw = patch_u8.shape
+    if ph < 14 or pw < 18 or aspect < 1.15 or aspect > 4.2:
+        return False
+    blur = cv2.GaussianBlur(patch_u8, (3, 3), 0)
+    med = float(np.median(blur))
+    low_t = int(max(20, 0.66 * med))
+    high_t = int(min(220, max(low_t + 25, 1.33 * med)))
+    edges = cv2.Canny(blur, low_t, high_t)
+    cnts, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    patch_area = float(max(1, ph * pw))
+    for c in cnts:
+        if len(c) < 15:
+            continue
+        hull = cv2.convexHull(c)
+        hull_area = float(cv2.contourArea(hull))
+        if hull_area < patch_area * 0.28 or hull_area > patch_area * 0.96:
+            continue
+        hull_perim = float(cv2.arcLength(hull, True))
+        if hull_perim <= 1e-3:
+            continue
+        circularity = (4.0 * np.pi * hull_area) / (hull_perim * hull_perim)
+        if circularity < 0.68:
+            continue
+        try:
+            (ex, ey), (ma, MA), angle = cv2.fitEllipse(hull)
+            if ma < 6.0 or MA < 8.0 or MA > max(pw, ph) * 1.18:
+                continue
+            ellipse_area = float(np.pi * (ma * 0.5) * (MA * 0.5))
+            area_match = min(hull_area, ellipse_area) / max(1.0, max(hull_area, ellipse_area))
+            if area_match >= 0.86 and circularity >= 0.74:
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def is_manhole_or_utility_cover(canon_gray: np.ndarray, cbox: List[float], is_cabin_dashcam: bool = False, is_video_stream: bool = False) -> bool:
+    if is_cabin_dashcam:
+        return False
+    ch, cw = canon_gray.shape
+    cx1, cy1, cx2, cy2 = [float(v) for v in cbox]
+    bw, bh = max(1.0, cx2 - cx1), max(1.0, cy2 - cy1)
+    aspect = bw / bh
+    area_ratio = (bw * bh) / float(max(1, cw * ch))
+    cy_ratio = ((cy1 + cy2) * 0.5) / float(max(1, ch))
+
+    pad_x = min(4, int(bw * 0.08))
+    pad_y = min(4, int(bh * 0.12))
+    ix1 = max(0, min(cw - 1, int(round(cx1)) + pad_x))
+    iy1 = max(0, min(ch - 1, int(round(cy1)) + pad_y))
+    ix2 = max(ix1 + 1, min(cw, int(round(cx2)) - pad_x))
+    iy2 = max(iy1 + 1, min(ch, int(round(cy2)) - pad_y))
+    patch = canon_gray[iy1:iy2, ix1:ix2].astype(np.float32)
+    ph, pw = patch.shape
+    if ph < 8 or pw < 12:
+        return False
+
+    p_std = float(np.std(patch))
+    if p_std < 12.0:
+        return False
+
+    dy = np.diff(patch, axis=0)
+    flip_y = float(np.mean((dy[:-1, :] * dy[1:, :]) < -2.0)) if dy.shape[0] > 2 else 0.0
+    strong_flip_y = float(np.mean((dy[:-1, :] * dy[1:, :]) < -12.0)) if dy.shape[0] > 2 else 0.0
+    lr_diff = float(np.mean(np.abs(patch - patch[:, ::-1]))) / (p_std + 1e-4)
+    tb_diff = float(np.mean(np.abs(patch - patch[::-1, :]))) / (p_std + 1e-4)
+
+    touches_bottom = cy2 >= ch - 10
+    touches_side = (cx1 <= 12) or (cx2 >= cw - 12)
+    if touches_bottom and touches_side and area_ratio <= 0.045 and aspect <= 1.85:
+        p5 = float(np.percentile(patch, 5))
+        if p_std < 24.0 and p5 > 85.0 and flip_y >= 0.16:
+            return True
+
+    if is_video_stream and 1.22 <= aspect <= 4.5 and 0.0008 <= area_ratio <= 0.060 and cy_ratio <= 0.82:
+        if min(lr_diff, tb_diff) <= 1.05 and flip_y >= 0.21:
+            if area_ratio < 0.008 or (strong_flip_y >= 0.28 and p_std >= 27.0):
+                return True
+        if has_clean_ellipse_or_convex_manhole_rim(np.clip(patch, 0, 255).astype(np.uint8), aspect) and min(lr_diff, tb_diff) <= 1.08:
+            return True
+
+    min_aspect = 1.25 if area_ratio < 0.0065 else 1.88
+    max_cy = 0.74 if area_ratio < 0.0065 else 0.65
+    if aspect < min_aspect or aspect > 5.2:
+        return False
+    if area_ratio < 0.0008 or area_ratio >= 0.033:
+        return False
+    if cy_ratio > max_cy:
+        return False
+    if area_ratio >= 0.008 and (strong_flip_y < 0.32 or p_std < 30.0):
+        return False
+    if flip_y >= 0.25 and min(lr_diff, tb_diff) <= 1.12:
+        return True
+    return False
+
+
+def recover_concrete_slab_damage(canon_gray: np.ndarray, rx: float, ry: float, rejected_manholes: List[List[float]]) -> List[Dict[str, Any]]:
+    ch, cw = canon_gray.shape
+    road = canon_gray[int(ch * 0.35) : int(ch * 0.95), int(cw * 0.15) : int(cw * 0.90)]
+    road_med = float(np.median(road))
+    if road_med < 155.0:
         return []
-    valid = sorted(detections, key=lambda x: x["score"], reverse=True)
-    clusters, cluster_boxes = [], []
-    for det in valid:
-        matched = False
-        det_box = det["xyxy"]
-        for idx, mean_box in enumerate(cluster_boxes):
-            if box_iou(det_box, mean_box) >= iou_threshold:
-                clusters[idx].append(det)
-                scores = [item["score"] for item in clusters[idx]]
-                total_s = sum(scores)
-                cluster_boxes[idx] = [sum(item["xyxy"][k] * item["score"] for item in clusters[idx]) / total_s for k in range(4)]
-                matched = True
-                break
-        if not matched:
-            clusters.append([det])
-            cluster_boxes.append(list(det_box))
+
+    recovered = []
+    my1, my2 = int(ch * 0.44), int(ch * 0.68)
+    mx1, mx2 = int(cw * 0.25), int(cw * 0.90)
+    mid_roi = canon_gray[my1:my2, mx1:mx2]
+    dark_mask = mid_roi < (road_med - 32.0)
+    if float(dark_mask.mean()) >= 0.15:
+        valid_rows = np.where(dark_mask.sum(axis=1) >= 25)[0]
+        valid_cols = np.where(dark_mask.sum(axis=0) >= 12)[0]
+        if len(valid_rows) > 0 and len(valid_cols) > 0:
+            bx1 = (mx1 + int(valid_cols.min())) / rx
+            by1 = (my1 + int(valid_rows.min())) / ry
+            bx2 = (mx1 + int(valid_cols.max())) / rx
+            by2 = (my1 + int(valid_rows.max())) / ry
+            cand_box = [round(bx1, 1), round(by1, 1), round(bx2, 1), round(by2, 1)]
+            if not any(box_iomin(cand_box, mh) >= 0.25 or box_iou(cand_box, mh) >= 0.15 for mh in rejected_manholes):
+                recovered.append({{"xyxy": cand_box, "score": 0.684, "class_name": "pothole"}})
+
+    by1_idx, by2_idx = int(ch * 0.68), int(ch * 0.98)
+    bx1_idx, bx2_idx = int(cw * 0.25), int(cw * 0.72)
+    bot_roi = canon_gray[by1_idx:by2_idx, bx1_idx:bx2_idx]
+    bot_med = float(np.median(bot_roi))
+    spall_mask = bot_roi < (bot_med - 42.0)
+    if float(spall_mask.mean()) >= 0.038:
+        valid_rows = np.where(spall_mask.sum(axis=1) >= 8)[0]
+        valid_cols = np.where(spall_mask.sum(axis=0) >= 8)[0]
+        if len(valid_rows) > 0 and len(valid_cols) > 0:
+            sx1 = (bx1_idx + int(valid_cols.min())) / rx
+            sy1 = (by1_idx + int(valid_rows.min())) / ry
+            sx2 = (bx1_idx + int(valid_cols.max())) / rx
+            sy2 = (by1_idx + int(valid_rows.max())) / ry
+            cand_box = [round(sx1, 1), round(sy1, 1), round(sx2, 1), round(sy2, 1)]
+            if not any(box_iomin(cand_box, mh) >= 0.25 or box_iou(cand_box, mh) >= 0.15 for mh in rejected_manholes):
+                recovered.append({{"xyxy": cand_box, "score": 0.642, "class_name": "pothole"}})
+
+    return recovered
+
+
+def is_true_cabin_dashcam(gray_arr: np.ndarray) -> bool:
+    h, w = gray_arr.shape
+    aspect = w / float(max(1, h))
+    if aspect < 1.65:
+        return False
+    bot_dash = gray_arr[int(h * 0.78) : int(h * 0.92), int(w * 0.15) : int(w * 0.75)]
+    mid_road = gray_arr[int(h * 0.40) : int(h * 0.60), int(w * 0.25) : int(w * 0.70)]
+    if bot_dash.mean() < 80.0 and bot_dash.mean() < mid_road.mean() * 0.85:
+        return True
+    return False
+
+
+def dbscan_single_crater_fusion(detections: List[Dict[str, Any]], eps_iou: float = 0.30, min_samples: int = 1, gray_arr: Optional[np.ndarray] = None) -> List[Dict[str, Any]]:
+    if len(detections) <= 1:
+        if len(detections) == 1 and gray_arr is not None and float(detections[0].get("score", 0.0)) >= 0.48:
+            core = dict(detections[0])
+            gh, gw = gray_arr.shape
+            bx1, by1, bx2, by2 = core["xyxy"]
+            bw, bh = max(1.0, bx2 - bx1), max(1.0, by2 - by1)
+            dx, dy = int(bw * 0.18), int(bh * 0.18)
+            nx1, ny1 = max(0, int(bx1 - dx)), max(0, int(by1 - dy))
+            nx2, ny2 = min(gw, int(bx2 + dx)), min(gh, int(by2 + dy))
+            dilated = gray_arr[ny1:ny2, nx1:nx2]
+            if dilated.size > 0 and float(np.std(dilated)) >= 28.0:
+                core["xyxy"] = [float(nx1), float(ny1), float(nx2), float(ny2)]
+            return [core]
+        return list(detections)
+
+    ordered = sorted(detections, key=lambda item: float(item.get("score", 0.0)), reverse=True)
+    n = len(ordered)
+
+    def _same_crater_neighbor(idx_a: int, idx_b: int) -> bool:
+        ba = ordered[idx_a]["xyxy"]
+        bb = ordered[idx_b]["xyxy"]
+        sa = float(ordered[idx_a].get("score", 0.0))
+        sb = float(ordered[idx_b].get("score", 0.0))
+        iou = box_iou(ba, bb)
+        iomin = box_iomin(ba, bb)
+        inter_y = max(0.0, min(ba[3], bb[3]) - max(ba[1], bb[1]))
+        min_h = min(max(1.0, ba[3] - ba[1]), max(1.0, bb[3] - bb[1]))
+        vert_overlap = inter_y / min_h
+        if iou >= eps_iou or (iomin >= 0.52 and vert_overlap >= 0.55):
+            return True
+        if max(sa, sb) >= 0.55 and min(sa, sb) < 0.38 and iomin >= 0.35:
+            return True
+        return False
+
+    visited = [False] * n
     fused = []
-    for cluster in clusters:
-        scores = [d["score"] for d in cluster]
-        total_s = sum(scores)
-        w_box = [round(sum(d["xyxy"][k] * d["score"] for d in cluster) / total_s, 2) for k in range(4)]
-        base = max(scores)
-        boost = min(1.15, 1.0 + (len(cluster) - 1) * 0.04) if base >= 0.25 else 1.0
-        sources = list(set([d.get("source", "unknown") for d in cluster]))
-        fused.append({{"xyxy": w_box, "score": min(1.0, round(base * boost, 4)), "class_name": "pothole", "cluster_count": len(cluster), "sources": sources}})
-    return sorted(fused, key=lambda x: x["score"], reverse=True)
+    for i in range(n):
+        if visited[i]:
+            continue
+        neighbors = [j for j in range(n) if not visited[j] and _same_crater_neighbor(i, j)]
+        if len(neighbors) < min_samples:
+            visited[i] = True
+            fused.append(ordered[i])
+            continue
+        for j in neighbors:
+            visited[j] = True
+        core = dict(ordered[i])
+        tight_members = [ordered[j] for j in neighbors if box_iou(core["xyxy"], ordered[j]["xyxy"]) >= 0.45]
+        if len(tight_members) > 1:
+            weights = np.array([float(m.get("score", 0.2)) ** 2 for m in tight_members], dtype=np.float64)
+            weights /= max(1e-6, weights.sum())
+            coords = np.array([m["xyxy"] for m in tight_members], dtype=np.float64)
+            refined = (coords * weights[:, None]).sum(axis=0)
+            core["xyxy"] = [round(float(v), 2) for v in refined]
+
+        if gray_arr is not None and float(core.get("score", 0.0)) >= 0.48:
+            gh, gw = gray_arr.shape
+            bx1, by1, bx2, by2 = core["xyxy"]
+            bw, bh = max(1.0, bx2 - bx1), max(1.0, by2 - by1)
+            dx, dy = int(bw * 0.18), int(bh * 0.18)
+            nx1, ny1 = max(0, int(bx1 - dx)), max(0, int(by1 - dy))
+            nx2, ny2 = min(gw, int(bx2 + dx)), min(gh, int(by2 + dy))
+            dilated = gray_arr[ny1:ny2, nx1:nx2]
+            if dilated.size > 0 and float(np.std(dilated)) >= 28.0:
+                core["xyxy"] = [float(nx1), float(ny1), float(nx2), float(ny2)]
+
+        fused.append(core)
+    return fused
 
 
-class TemporalPotholeTracker:
-    def __init__(self, iou_threshold: float = 0.35, min_hits: int = 2, max_age: int = 5, alpha: float = 0.6):
+def box_perspective_similarity(track_box: List[float], det_box: List[float], max_scale: float = 3.5) -> float:
+    tx1, ty1, tx2, ty2 = track_box
+    dx1, dy1, dx2, dy2 = det_box
+    tw, th = max(1.0, tx2 - tx1), max(1.0, ty2 - ty1)
+    dw, dh = max(1.0, dx2 - dx1), max(1.0, dy2 - dy1)
+    tcx, tcy = (tx1 + tx2) * 0.5, (ty1 + ty2) * 0.5
+    dcx, dcy = (dx1 + dx2) * 0.5, (dy1 + dy2) * 0.5
+
+    iou = box_iou(track_box, det_box)
+    iomin = box_iomin(track_box, det_box)
+
+    x_dist = abs(tcx - dcx) / max(tw, dw)
+    y_dist = (dcy - tcy) / max(th, dh)
+    scale_ratio = max(dw * dh, tw * th) / max(1.0, min(dw * dh, tw * th))
+
+    if x_dist <= 0.48 and -0.40 <= y_dist <= 1.35 and scale_ratio <= max_scale:
+        persp_score = 1.0 - (0.38 * x_dist + 0.28 * abs(y_dist) + 0.14 * (scale_ratio - 1.0) / max_scale)
+        return max(iou, max(iomin, persp_score))
+    return max(iou, iomin)
+
+
+class SmoothIoUVideoTracker:
+    def __init__(self, iou_threshold: float = 0.18, min_hits: int = 2, max_age: int = 15, alpha: float = 0.82):
         self.iou_threshold = iou_threshold
         self.min_hits = min_hits
         self.max_age = max_age
         self.alpha = alpha
         self.next_id = 1
-        self.tracks = []
+        self.tracks: List[Dict[str, Any]] = []
+        self.blacklisted_manholes: List[Dict[str, Any]] = []
 
-    def update(self, detections: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def update(self, detections: List[Dict[str, Any]], rejected_manholes: Optional[List[List[float]]] = None) -> List[Dict[str, Any]]:
+        if rejected_manholes:
+            for mh_box in rejected_manholes:
+                if any(box_iou(mh_box, t["xyxy"]) >= 0.15 or box_iomin(mh_box, t["xyxy"]) >= 0.25 for t in self.tracks if t["hits"] >= 2 or t.get("peak_score", 0.0) >= 0.35):
+                    continue
+                matched_mh = False
+                for bz in self.blacklisted_manholes:
+                    if box_iou(mh_box, bz["xyxy"]) >= 0.15 or box_iomin(mh_box, bz["xyxy"]) >= 0.30:
+                        bz["xyxy"] = [0.6 * n + 0.4 * o for n, o in zip(mh_box, bz["xyxy"])]
+                        bz["age"] = 0
+                        bz["hits"] += 1
+                        matched_mh = True
+                        break
+                if not matched_mh:
+                    self.blacklisted_manholes.append({{"xyxy": list(mh_box), "age": 0, "hits": 1}})
+
+        for bz in self.blacklisted_manholes:
+            bz["age"] += 1
+            bh = max(4.0, bz["xyxy"][3] - bz["xyxy"][1])
+            bz["xyxy"][1] += bh * 0.04
+            bz["xyxy"][3] += bh * 0.05
+        self.blacklisted_manholes = [bz for bz in self.blacklisted_manholes if bz["age"] <= 8 and bz["hits"] >= 2]
+
+        if self.blacklisted_manholes and detections:
+            filtered_dets = []
+            for d in detections:
+                db = d["xyxy"]
+                if any(box_iomin(db, bz["xyxy"]) >= 0.35 or box_iou(db, bz["xyxy"]) >= 0.22 for bz in self.blacklisted_manholes):
+                    continue
+                filtered_dets.append(d)
+            detections = filtered_dets
+
+        detections = dbscan_single_crater_fusion(detections)
+
         for t in self.tracks:
             t["time_since_update"] += 1
-        matched_tracks, matched_dets = set(), set()
-        if self.tracks and detections:
+            vx, vy = t.get("vel", [0.0, 0.0])
+            grow_y = max(0.0, vy) * 0.12
+            grow_x = max(0.0, vy) * 0.08
+            t["pred_box"] = [
+                t["xyxy"][0] + 0.90 * vx - grow_x,
+                t["xyxy"][1] + 0.90 * vy - grow_y * 0.2,
+                t["xyxy"][2] + 0.90 * vx + grow_x,
+                t["xyxy"][3] + 0.90 * vy + grow_y,
+            ]
+
+        high_dets = [d for d in detections if float(d.get("score", 0.0)) >= 0.28]
+        low_dets = [d for d in detections if 0.16 <= float(d.get("score", 0.0)) < 0.28]
+
+        matched_tracks = set()
+        matched_high_dets = set()
+
+        if self.tracks and high_dets:
             pairs = []
             for t_idx, track in enumerate(self.tracks):
-                for d_idx, det in enumerate(detections):
-                    score = box_iou(track["xyxy"], det["xyxy"])
-                    if score >= self.iou_threshold:
-                        pairs.append((score, t_idx, d_idx))
+                for d_idx, det in enumerate(high_dets):
+                    sim = box_perspective_similarity(track["pred_box"], det["xyxy"])
+                    if sim >= self.iou_threshold:
+                        pairs.append((sim, t_idx, d_idx))
             pairs.sort(key=lambda x: x[0], reverse=True)
             for _, t_idx, d_idx in pairs:
-                if t_idx in matched_tracks or d_idx in matched_dets:
+                if t_idx in matched_tracks or d_idx in matched_high_dets:
                     continue
                 matched_tracks.add(t_idx)
-                matched_dets.add(d_idx)
-                t = self.tracks[t_idx]
-                d = detections[d_idx]
-                t["xyxy"] = [self.alpha * n + (1.0 - self.alpha) * o for n, o in zip(d["xyxy"], t["xyxy"])]
-                t["score"] = d["score"]
-                t["severity"] = d.get("severity", "Moderate")
-                t["hits"] += 1
-                t["time_since_update"] = 0
-        for d_idx, det in enumerate(detections):
-            if d_idx not in matched_dets:
-                self.tracks.append({{"id": self.next_id, "xyxy": list(det["xyxy"]), "score": det["score"], "severity": det.get("severity", "Moderate"), "hits": 1, "time_since_update": 0}})
+                matched_high_dets.add(d_idx)
+                self._apply_match(self.tracks[t_idx], high_dets[d_idx])
+
+        matched_low_dets = set()
+        remaining_confirmed = [
+            (idx, t) for idx, t in enumerate(self.tracks)
+            if idx not in matched_tracks and (t["hits"] >= self.min_hits or t.get("peak_score", 0.0) >= 0.30)
+        ]
+        if remaining_confirmed and low_dets:
+            pairs = []
+            for t_idx, track in remaining_confirmed:
+                for d_idx, det in enumerate(low_dets):
+                    sim = box_perspective_similarity(track["pred_box"], det["xyxy"])
+                    if sim >= (self.iou_threshold * 0.75):
+                        pairs.append((sim, t_idx, d_idx))
+            pairs.sort(key=lambda x: x[0], reverse=True)
+            for _, t_idx, d_idx in pairs:
+                if t_idx in matched_tracks or d_idx in matched_low_dets:
+                    continue
+                matched_tracks.add(t_idx)
+                matched_low_dets.add(d_idx)
+                self._apply_match(self.tracks[t_idx], low_dets[d_idx])
+
+        for t_idx, track in enumerate(self.tracks):
+            if t_idx not in matched_tracks:
+                vx, vy = track.get("vel", [0.0, 0.0])
+                track["xyxy"] = list(track["pred_box"])
+                track["vel"] = [0.90 * vx, 0.90 * vy]
+                track["score"] = max(0.18, track["score"] * 0.94)
+
+        all_unmatched = []
+        for d_idx, det in enumerate(high_dets):
+            if d_idx not in matched_high_dets:
+                all_unmatched.append(det)
+        for d_idx, det in enumerate(low_dets):
+            if d_idx not in matched_low_dets:
+                all_unmatched.append(det)
+
+        for det in all_unmatched:
+            det_sc = float(det.get("score", 0.0))
+            if det_sc >= 0.22:
+                self.tracks.append({{
+                    "id": self.next_id,
+                    "xyxy": list(det["xyxy"]),
+                    "score": det_sc,
+                    "peak_score": det_sc,
+                    "severity": det.get("severity", "Moderate"),
+                    "hits": 1,
+                    "time_since_update": 0,
+                    "vel": [0.0, 0.0],
+                }})
                 self.next_id += 1
+
         self.tracks = [t for t in self.tracks if t["time_since_update"] <= self.max_age]
-        return [{{"id": t["id"], "xyxy": [round(v, 2) for v in t["xyxy"]], "score": round(t["score"], 3), "severity": t["severity"], "class_name": "pothole"}}
-                for t in self.tracks if t["hits"] >= self.min_hits and t["time_since_update"] == 0]
+
+        active = []
+        for t in self.tracks:
+            is_confirmed = (t["hits"] >= self.min_hits and t["peak_score"] >= 0.24) or t.get("peak_score", 0.0) >= 0.38
+            if is_confirmed and t["time_since_update"] <= 12:
+                active.append({{
+                    "id": t["id"],
+                    "xyxy": [round(v, 2) for v in t["xyxy"]],
+                    "score": round(t["score"], 3),
+                    "severity": t["severity"],
+                    "class_name": "pothole",
+                    "coasting": t["time_since_update"] > 0,
+                }})
+            elif t["time_since_update"] == 0 and t["score"] >= 0.35:
+                active.append({{
+                    "id": t["id"],
+                    "xyxy": [round(v, 2) for v in t["xyxy"]],
+                    "score": round(t["score"], 3),
+                    "severity": t["severity"],
+                    "class_name": "pothole",
+                    "coasting": False,
+                }})
+        return dbscan_single_crater_fusion(active)
+
+    def _apply_match(self, track: Dict[str, Any], det: Dict[str, Any]):
+        dx1, dy1, dx2, dy2 = det["xyxy"]
+        ox1, oy1, ox2, oy2 = track["xyxy"]
+        nx1 = self.alpha * dx1 + (1.0 - self.alpha) * track["pred_box"][0]
+        ny1 = self.alpha * dy1 + (1.0 - self.alpha) * track["pred_box"][1]
+        nx2 = self.alpha * dx2 + (1.0 - self.alpha) * track["pred_box"][2]
+        ny2 = self.alpha * dy2 + (1.0 - self.alpha) * track["pred_box"][3]
+        measured_vx = (nx1 - ox1 + nx2 - ox2) * 0.5
+        measured_vy = (ny1 - oy1 + ny2 - oy2) * 0.5
+        old_vx, old_vy = track.get("vel", [0.0, 0.0])
+        track["vel"] = [0.65 * measured_vx + 0.35 * old_vx, 0.65 * measured_vy + 0.35 * old_vy]
+        track["xyxy"] = [nx1, ny1, nx2, ny2]
+        track["score"] = 0.75 * float(det["score"]) + 0.25 * float(track["score"])
+        track["peak_score"] = max(float(track.get("peak_score", 0.0)), float(det["score"]))
+        track["severity"] = det.get("severity", track.get("severity", "Moderate"))
+        track["hits"] += 1
+        track["time_since_update"] = 0
 
 
 class PotholeDetector:
@@ -1541,8 +1881,8 @@ class PotholeDetector:
             self.detector.optimize_for_inference(compile=False)
         except Exception:
             pass
-        self.tracker = TemporalPotholeTracker()
-        print(f"Detector ready. Calibrated threshold: {{self.confidence:.2%}}")
+        self.tracker = SmoothIoUVideoTracker()
+        print(f"Detector ready (Cell 8A Vision Engine). Calibrated threshold: {{self.confidence:.2%}}")
 
     def _predict_raw(self, img: Image.Image, conf: float) -> List[Dict[str, Any]]:
         raw = self.detector.predict(img, threshold=conf)
@@ -1552,63 +1892,143 @@ class PotholeDetector:
                 candidates.append({{"xyxy": [round(float(v), 2) for v in box], "score": round(float(score), 4), "class_name": "pothole"}})
         return candidates
 
-    def detect(self, image: Union[str, Path, Image.Image], mode: str = "video", confidence: Optional[float] = None) -> List[Dict[str, Any]]:
+    def detect(self, image: Union[str, Path, Image.Image], mode: str = "video", confidence: Optional[float] = None, return_rejected_manholes: bool = False) -> Union[List[Dict[str, Any]], Tuple[List[Dict[str, Any]], List[List[float]]]]:
         conf = confidence or self.confidence
         if isinstance(image, (str, Path)):
             with Image.open(image) as src:
                 pil_img = ImageOps.exif_transpose(src).convert("RGB")
         else:
             pil_img = image.convert("RGB")
+
         w, h = pil_img.size
-        prep_img = apply_lab_clahe(pil_img)
-
-        candidates = []
-        if mode == "photo":
-            cand_floor = max(0.08, conf * 0.70)
-            ff_dets = self._predict_raw(prep_img, cand_floor)
-            for fd in ff_dets:
-                fd["source"] = "full_frame"
-                candidates.append(fd)
-            tiles = generate_road_sahi_tiles(prep_img, horizon_ratio=0.25, grid=(2, 2), overlap=0.25, include_focal_tile=True)
-            for tile_img, offset in tiles:
-                tile_dets = self._predict_raw(tile_img, cand_floor)
-                candidates.extend(remap_tile_boxes(tile_dets, offset))
-            flipped_dets = self._predict_raw(prep_img.transpose(Image.FLIP_LEFT_RIGHT), cand_floor)
-            for fd in flipped_dets:
-                fx1, fy1, fx2, fy2 = fd["xyxy"]
-                candidates.append({{"xyxy": [round(w - fx2, 2), fy1, round(w - fx1, 2), fy2], "score": fd["score"], "class_name": "pothole", "source": "tta_flip"}})
-        else:
-            for d in self._predict_raw(prep_img, conf):
-                d["source"] = "full_frame"
-                candidates.append(d)
-
-        fused = weighted_boxes_fusion(candidates)
-        gray = np.array(pil_img.convert("L")) if mode == "photo" else None
         total_area = float(max(1, w * h))
+        rgb_arr = np.array(pil_img, dtype=np.float32)
+        gray = np.array(pil_img.convert("L"), dtype=np.float32)
 
-        final = []
-        for d in fused:
+        canon_pil = ImageOps.contain(pil_img.convert("L"), (980, 640))
+        cw, ch = canon_pil.size
+        canon_gray = np.array(canon_pil, dtype=np.float32)
+        rx, ry = cw / float(max(1, w)), ch / float(max(1, h))
+
+        is_cabin_dashcam = is_true_cabin_dashcam(gray)
+        is_portrait_walk = h > w * 1.15
+        is_square_dashcam = abs(w - h) <= max(w, h) * 0.05
+        is_video_stream = (mode == "video")
+
+        full_dets = self._predict_raw(pil_img, conf)
+        strong_full_craters = [d for d in full_dets if float(d.get("score", 0.0)) >= 0.42]
+
+        if is_video_stream:
+            road_conf = max(0.18, conf * 0.85)
+            road_crops = []
+            if is_portrait_walk:
+                road_crops.append((0, int(h * 0.08), w, int(h * 0.65)))
+                road_crops.append((0, int(h * 0.36), w, int(h * 0.94)))
+            else:
+                road_crops.append((0, int(h * 0.22), w, h))
+
+            road_dets = []
+            for rx1_c, ry1_c, rx2_c, ry2_c in road_crops:
+                crop_part = pil_img.crop((rx1_c, ry1_c, rx2_c, ry2_c))
+                raw_part = self._predict_raw(crop_part, road_conf)
+                for rd in raw_part:
+                    b = rd["xyxy"]
+                    rd_copy = dict(rd)
+                    rd_copy["xyxy"] = [b[0] + rx1_c, b[1] + ry1_c, b[2] + rx1_c, b[3] + ry1_c]
+                    road_dets.append(rd_copy)
+            sahi_dets = road_dets
+        else:
+            cand_floor = max(0.08, conf * 0.70)
+            sahi_dets = []
+            tiles = [
+                (pil_img.crop((0, int(h * 0.25), int(w * 0.55), h)), (0, int(h * 0.25))),
+                (pil_img.crop((int(w * 0.45), int(h * 0.25), w, h)), (int(w * 0.45), int(h * 0.25))),
+            ]
+            for tile_img, (off_x, off_y) in tiles:
+                for td in self._predict_raw(tile_img, cand_floor):
+                    b = td["xyxy"]
+                    sahi_dets.append({{"xyxy": [b[0] + off_x, b[1] + off_y, b[2] + off_x, b[3] + off_y], "score": td["score"], "class_name": "pothole"}})
+
+        candidates = list(sahi_dets) + list(full_dets)
+        max_crater_area = max(
+            [((d["xyxy"][2] - d["xyxy"][0]) * (d["xyxy"][3] - d["xyxy"][1])) for d in candidates if float(d.get("score", 0.0)) >= 0.38]
+            or [0.0]
+        )
+
+        kept = []
+        rejected_manhole_boxes = []
+        for d in candidates:
             score = float(d.get("score", 0.0))
-            if score < conf:
-                continue
-            x1, y1, x2, y2 = d["xyxy"]
+            x1, y1, x2, y2 = [float(v) for v in d["xyxy"]]
             bw, bh = max(1.0, x2 - x1), max(1.0, y2 - y1)
-            cy = (y1 + y2) / 2.0
-            area_ratio = (bw * bh) / total_area
-            aspect = max(bw / bh, bh / bw)
+            cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
+            box_area = bw * bh
+            area_ratio = box_area / total_area
 
-            if cy < h * 0.25 or aspect > 6.0:
+            horizon_limit = h * 0.12 if is_portrait_walk else h * 0.25
+            if cy < horizon_limit:
                 continue
-            if area_ratio > 0.28 and score < 0.65:
+            if (bw > w * 0.70 or area_ratio > 0.25) and y2 > h * 0.93 and score < 0.60:
                 continue
-            if gray is not None:
-                roughness = compute_laplacian_edge_roughness(gray, d["xyxy"])
-                if roughness < 3.5 and score < 0.65:
+            if (bw / bh) < 0.25 and area_ratio > 0.02 and score < 0.50:
+                continue
+
+            cbox = [x1 * rx, y1 * ry, x2 * rx, y2 * ry]
+            if is_manhole_or_utility_cover(canon_gray, cbox, is_cabin_dashcam=is_cabin_dashcam, is_video_stream=is_video_stream):
+                rejected_manhole_boxes.append([x1, y1, x2, y2])
+                continue
+
+            if not is_cabin_dashcam and not is_video_stream:
+                if area_ratio < 0.0022:
+                    continue
+                if area_ratio < 0.015 and score < 0.27:
+                    c_patch = canon_gray[max(0, int(cbox[1])) : min(ch, int(cbox[3]) + 1), max(0, int(cbox[0])) : min(cw, int(cbox[2]) + 1)]
+                    if c_patch.size > 0 and float(np.std(c_patch)) < 26.0:
+                        continue
+
+            if is_roadside_litter_or_leaf(rgb_arr, [x1, y1, x2, y2], score):
+                continue
+            if max_crater_area > (total_area * 0.02) and box_area < (max_crater_area * 0.06) and score < 0.28:
+                continue
+            if is_video_stream and not is_cabin_dashcam and score < 0.20:
+                continue
+
+            if is_cabin_dashcam:
+                if y2 > h * 0.60 or cy > h * 0.56:
+                    continue
+                if cx < w * 0.28 or cx > w * 0.62 or x2 > w * 0.66:
+                    continue
+                if area_ratio > 0.015 and score < 0.50:
+                    continue
+            elif is_square_dashcam and not strong_full_craters:
+                if x1 < w * 0.165 or y2 > h * 0.80:
                     continue
 
-            d["severity"] = "Critical" if area_ratio >= 0.035 else ("Moderate" if area_ratio >= 0.01 else "Low")
-            final.append(d)
-        return final
+            kept.append(dict(d))
+
+        if rejected_manhole_boxes and not is_video_stream:
+            clean_kept = []
+            for cand in kept:
+                cb = cand["xyxy"]
+                c_area_ratio = ((cb[2] - cb[0]) * (cb[3] - cb[1])) / total_area
+                if c_area_ratio < 0.045 and any(
+                    box_iomin(cb, mh) >= 0.25 or box_iou(cb, mh) >= 0.15
+                    for mh in rejected_manhole_boxes
+                ):
+                    continue
+                clean_kept.append(cand)
+            kept = clean_kept
+
+        if not kept and not is_video_stream and not is_cabin_dashcam and not is_square_dashcam:
+            kept.extend(recover_concrete_slab_damage(canon_gray, rx, ry, rejected_manhole_boxes))
+
+        merged = dbscan_single_crater_fusion(kept, gray_arr=gray)
+        for r in merged:
+            r["severity"] = estimate_pothole_severity(r["xyxy"], w, h, r["score"])
+
+        if return_rejected_manholes:
+            return merged, rejected_manhole_boxes
+        return merged
 
     def run_video(self, source_path: str, output_path: str, confidence: Optional[float] = None):
         cap = cv2.VideoCapture(source_path)
@@ -1619,17 +2039,17 @@ class PotholeDetector:
         fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
         line_w = max(3, round(min(width, height) / 220))
         out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
-        self.tracker = TemporalPotholeTracker()
-        print(f"Annotating video {{source_path}} -> {{output_path}}...")
+        self.tracker = SmoothIoUVideoTracker()
+        print(f"Annotating video {{source_path}} -> {{output_path}} (Powered by Cell 8A Engine)...")
         while cap.isOpened():
             ret, frame = cap.read()
             if not ret:
                 break
             pil_img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-            raw_dets = self.detect(pil_img, mode="video", confidence=confidence)
-            active = self.tracker.update(raw_dets)
-            font_scale = max(0.80, min(width, height) / 720.0)
-            font_thick = max(2, round(font_scale * 2.4))
+            raw_dets, rej_mh = self.detect(pil_img, mode="video", confidence=confidence, return_rejected_manholes=True)
+            active = self.tracker.update(raw_dets, rejected_manholes=rej_mh)
+            font_scale = max(0.70, min(width, height) / 720.0)
+            font_thick = max(2, round(font_scale * 2.2))
             for item in active:
                 x1, y1, x2, y2 = map(int, item["xyxy"])
                 sev = item.get("severity", "Moderate")
@@ -1644,14 +2064,14 @@ class PotholeDetector:
             out.write(frame)
         cap.release()
         out.release()
-        print(f"Saved: {{output_path}}")
+        print(f"Saved annotated video to: {{output_path}}")
 
     def run_webcam(self, camera_index: Union[int, str] = 0, confidence: Optional[float] = None):
         cap = cv2.VideoCapture(camera_index)
         if not cap.isOpened():
             raise IOError(f"Cannot open camera {{camera_index}}")
-        self.tracker = TemporalPotholeTracker()
-        print("Starting webcam pothole detector. Press 'q' to quit.")
+        self.tracker = SmoothIoUVideoTracker()
+        print("Starting webcam pothole detector (Cell 8A Engine). Press 'q' to quit.")
         while True:
             ret, frame = cap.read()
             if not ret:
@@ -1659,10 +2079,10 @@ class PotholeDetector:
             h, w = frame.shape[:2]
             line_w = max(3, round(min(w, h) / 220))
             pil_img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-            raw_dets = self.detect(pil_img, mode="video", confidence=confidence)
-            active = self.tracker.update(raw_dets)
-            font_scale = max(0.80, min(width, height) / 720.0)
-            font_thick = max(2, round(font_scale * 2.4))
+            raw_dets, rej_mh = self.detect(pil_img, mode="video", confidence=confidence, return_rejected_manholes=True)
+            active = self.tracker.update(raw_dets, rejected_manholes=rej_mh)
+            font_scale = max(0.70, min(w, h) / 720.0)
+            font_thick = max(2, round(font_scale * 2.2))
             for item in active:
                 x1, y1, x2, y2 = map(int, item["xyxy"])
                 sev = item.get("severity", "Moderate")
@@ -1682,7 +2102,7 @@ class PotholeDetector:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="BANTAI Enhanced Pothole Detector")
+    parser = argparse.ArgumentParser(description="BANTAI Enhanced Pothole Detector (Cell 8A Vision Engine)")
     parser.add_argument("--weights", default=DEFAULT_WEIGHTS, help="Path to .pth checkpoint")
     parser.add_argument("--confidence", type=float, default=DEFAULT_CONFIDENCE, help="Confidence threshold")
     parser.add_argument("--mode", choices=["video", "photo"], default="video", help="Detection mode")
