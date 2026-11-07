@@ -6,7 +6,7 @@ test('user submission, duplicate consolidation, status update and resolved ranki
   const now = '2026-10-13T04:00:00.000Z'
   let store = seedStore(new Date(now))
   const before = rankIncidents(store)[0].frequency
-  store = addResidentReport(store, { category: 'Garbage pile', location: 'J. P. Rizal St. near Market', observedAt: now, description: 'Demo report' }, 'TEST-1', now)
+  store = addResidentReport(store, { category: 'Trash', location: 'J. P. Rizal St. near Market', observedAt: now, description: 'Demo report' }, 'TEST-1', now)
   assert.equal(rankIncidents(store)[0].frequency, before)
   store = reviewReport(store, 'TEST-1', 'validate', 'INC-001', 'Same physical issue', now, 'NEW-1')
   assert.equal(store.incidents.length, 4)
@@ -25,7 +25,7 @@ test('ties use recency, rejected and video observations wait for validation', ()
   let store = seedStore(new Date(now))
   assert.deepEqual(rankIncidents(store).map(i => i.id), ['INC-001', 'INC-002', 'INC-003'])
   const frequencies = rankIncidents(store).map(i => i.frequency)
-  store = addVideoObservations(store, 'J. P. Rizal St. near Market', 'Garbage pile', now, 'test')
+  store = addVideoObservations(store, 'J. P. Rizal St. near Market', 'Trash', now, 'test')
   assert.deepEqual(rankIncidents(store).map(i => i.frequency), frequencies)
   assert.equal(store.observations.filter(o => o.source === 'Video observation').length, 3)
   assert.equal(reviewReport(store, 'VID-test-1', 'reject', undefined, '', now, 'unused'), store)

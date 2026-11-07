@@ -1,8 +1,8 @@
 """BANTAI Dual-Model Municipal Web API Server (Starlette + Uvicorn).
 
 Serves:
-- GET /api/v1/health: Environment, Model A, and Model B readiness
-- POST /api/v1/analyze: Single-pass upload and dual-model analysis
+- GET /api/v1/health: Environment, Model A (Grounding DINO-T), and Model B (RF-DETR Nano + Cell 8A) readiness
+- POST /api/v1/analyze: Single-pass upload and dual-model analysis (Model A Trash + Model B Pothole)
 - GET /api/v1/media/{incident_id}/frames/{filename}: Serves extracted frames
 """
 from __future__ import annotations
@@ -27,6 +27,7 @@ from .fusion import fuse_dual_model_incident
 STORAGE_ROOT = Path(__file__).resolve().parent / "media_storage"
 STORAGE_ROOT.mkdir(parents=True, exist_ok=True)
 
+# Singleton initialization at startup (per AGENT_INTEGRATION_GUIDE.md Rule 2)
 trash_service = BantaiTrashService()
 pothole_service = BantaiPotholeService()
 
@@ -34,6 +35,7 @@ pothole_service = BantaiPotholeService()
 async def health_check(request: Request) -> JSONResponse:
     """Returns system status, CUDA device, and readiness of both models."""
     trash_service.checkpoints_ready = trash_service._verify_checkpoints()
+    pothole_ready = pothole_service.is_fully_available()
     return JSONResponse({
         "status": "healthy",
         "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
@@ -44,16 +46,19 @@ async def health_check(request: Request) -> JSONResponse:
             "device": trash_service.device,
         },
         "model_b_pothole": {
-            "name": "RF-DETR Nano Road Defect Detector (Disabled for Model A Focus)",
-            "status": "disabled",
-            "weights_present": False,
-            "device": "none",
+            "name": pothole_service.bundle_name,
+            "vision_engine": pothole_service.vision_engine,
+            "status": "ready" if pothole_ready else "degraded",
+            "weights_present": pothole_service.is_weights_present(),
+            "fully_ready": pothole_ready,
+            "calibrated_threshold": pothole_service.calibrated_conf,
+            "device": pothole_service.device,
         },
     })
 
 
 async def analyze_media(request: Request) -> JSONResponse:
-    """Single-pass media upload, 1.0 FPS extraction, Model A analysis with Model B disabled."""
+    """Single-pass media upload, 1.0 FPS extraction, and dual-model (Model A + Model B) analysis."""
     form = await request.form()
     uploaded_file = form.get("file")
     if not uploaded_file or not hasattr(uploaded_file, "filename"):
@@ -61,6 +66,8 @@ async def analyze_media(request: Request) -> JSONResponse:
 
     location = str(form.get("location", "J. P. Rizal St. near Market"))
     description = str(form.get("description", ""))
+    category = str(form.get("category", "Trash")).strip()
+    is_pothole_mode = category.lower() == "pothole"
     try:
         sample_fps = float(form.get("sample_fps", 1.0))
     except (ValueError, TypeError):
@@ -91,19 +98,30 @@ async def analyze_media(request: Request) -> JSONResponse:
 
         is_video = media_meta["type"] == "video"
 
-        # Step 2: Model A (Trash Detection & D-112 Spatial Grouping)
-        trash_findings = trash_service.run_on_frames(
-            frame_entries=frame_entries,
-            frames_dir=frames_dir,
-            score_threshold=0.15,
-            top_k=25,
-        )
-
-        # Step 3: Model B (Pothole Detection) - Disabled for Model A Focus
-        road_findings = [
-            {"model_version": "disabled", "total_defects": 0, "defects": []}
-            for _ in frame_entries
-        ]
+        # Step 2 & 3: Category-Selective Model Execution
+        if is_pothole_mode:
+            # Model A skipped; Model B active
+            trash_findings = [
+                {**trash_service._run_empty_findings(entry), "model_version": "skipped_by_category"}
+                for entry in frame_entries
+            ]
+            road_findings = pothole_service.run_on_frames(
+                frame_entries=frame_entries,
+                frames_dir=frames_dir,
+                is_video=is_video,
+            )
+        else:
+            # Model A active; Model B skipped
+            trash_findings = trash_service.run_on_frames(
+                frame_entries=frame_entries,
+                frames_dir=frames_dir,
+                score_threshold=0.15,
+                top_k=25,
+            )
+            road_findings = [
+                {"model_version": "skipped_by_category", "total_defects": 0, "defects": []}
+                for _ in frame_entries
+            ]
 
         # Step 4: Fusion & Hotspot Prioritization (with Smart Frame Filtering)
         unified_response = fuse_dual_model_incident(

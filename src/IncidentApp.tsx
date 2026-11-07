@@ -23,8 +23,8 @@ export default function IncidentApp() {
     <main className="page-width main-content">
       <div className="eyebrow">{mode === 'admin' ? 'BARANGAY OPERATIONS' : 'RESIDENT PORTAL'} / INTERACTIVE WIREFRAME</div>
       <h1>{page === 'overview' ? (mode === 'admin' ? 'Incident management' : 'A better barangay starts with a report.') : page === 'mine' ? 'My reports' : page === 'review' ? 'Review submissions' : page === 'incidents' ? 'Incident records' : page === 'video' ? 'Video monitoring simulation' : 'Report an issue'}</h1>
-      <p>Report garbage piles, potholes, and road surface damage. Follow each report from review to resolution.</p>
-      <div className="dashboard-note">Demo mode switch · Both roles share this session. Detection is simulated. Refreshing resets the demo.</div>
+      <p>Report trash and potholes. Follow each report from review to resolution.</p>
+      <div className="dashboard-note">Demo mode switch · Both roles share this session. Category-selective AI active: Trash runs Model A (Grounding DINO-T); Pothole runs Model B (RF-DETR Nano Cell 8A).</div>
       {notice && <div className="notice" role="status">{notice}</div>}
       {page === 'submit' && mode === 'user' && (
         <ReportForm
@@ -50,6 +50,7 @@ export default function IncidentApp() {
                 dualModelResult: report.dualModelResult,
                 detections: frame.trash_findings?.detections || [],
                 regions: frame.trash_findings?.region_list || [],
+                defects: frame.road_defect_findings?.defects || [],
                 imageWidth: frame.width || 1080,
                 imageHeight: frame.height || 1920,
                 hotspotScore: (frame as any).frame_hotspot_score ?? report.hotspotScore,

@@ -32,16 +32,19 @@ class TestEndToEndVerification(unittest.TestCase):
         cls.client = TestClient(app)
         cls.video_path = MODELING_ROOT / "data/input/Motion_Extract_Testing_2.mp4"
         cls.still_path = Path(r"C:\Users\Justine\Downloads\For_testing.jpg")
+        cls.pothole_path = Path(r"C:\Users\Justine\Downloads\test#3.jpg")
 
     def test_01_health_check(self):
-        """GET /api/v1/health returns Model A ready and Model B disabled."""
+        """GET /api/v1/health returns both Model A and Model B ready."""
         resp = self.client.get("/api/v1/health")
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
         self.assertEqual(data["status"], "healthy")
         self.assertTrue(data["model_a_trash"]["fully_ready"])
-        self.assertEqual(data["model_b_pothole"]["status"], "disabled")
-        print("\n[OK] Health check verified: Model A ready, Model B disabled.")
+        self.assertEqual(data["model_b_pothole"]["status"], "ready")
+        self.assertTrue(data["model_b_pothole"]["fully_ready"])
+        self.assertTrue(data["model_b_pothole"]["weights_present"])
+        print("\n[OK] Health check verified: Both Model A (Trash) and Model B (Pothole Cell 8A) are ready.")
 
     def test_02_video_motion_extract_testing_2(self):
         """POST /api/v1/analyze with Motion_Extract_Testing_2.mp4 returns only the 3 paper towel frames."""
@@ -52,7 +55,7 @@ class TestEndToEndVerification(unittest.TestCase):
         with open(self.video_path, "rb") as f:
             resp = self.client.post(
                 "/api/v1/analyze",
-                data={"location": "J. P. Rizal St. near Market", "sample_fps": "1.0"},
+                data={"location": "J. P. Rizal St. near Market", "category": "Trash", "sample_fps": "1.0"},
                 files={"file": ("Motion_Extract_Testing_2.mp4", f, "video/mp4")},
             )
 
@@ -71,6 +74,7 @@ class TestEndToEndVerification(unittest.TestCase):
 
         # Each frame must contain 4 Paper detections and 1 Group of Individual Litter (4 items)
         for f in frames:
+            self.assertEqual(f["road_defect_findings"]["model_version"], "skipped_by_category")
             tf = f["trash_findings"]
             self.assertEqual(tf["total_items"], 4)
             self.assertEqual(tf["regions"]["groups_of_litter"], 1)
@@ -99,7 +103,7 @@ class TestEndToEndVerification(unittest.TestCase):
         with open(self.still_path, "rb") as f:
             resp = self.client.post(
                 "/api/v1/analyze",
-                data={"location": "Barangay Santa Elena Curb", "sample_fps": "1.0"},
+                data={"location": "Barangay Santa Elena Curb", "category": "Trash", "sample_fps": "1.0"},
                 files={"file": ("For_testing.jpg", f, "image/jpeg")},
             )
 
@@ -114,6 +118,7 @@ class TestEndToEndVerification(unittest.TestCase):
         self.assertEqual(len(frames), 1)
 
         f0 = frames[0]
+        self.assertEqual(f0["road_defect_findings"]["model_version"], "skipped_by_category")
         self.assertEqual(f0["width"], 5136)
         self.assertEqual(f0["height"], 3984)
 
@@ -146,6 +151,40 @@ class TestEndToEndVerification(unittest.TestCase):
         self.assertIn("Potentially Hazardous", bot_ind["category_breakdown"])
 
         print("[OK] For_testing.jpg verified: Exactly 1 frame (5136x3984), 6 detections, 3 regions (Top Plastic, Middle Group of 4, Bottom Potentially Hazardous).")
+
+    def test_04_pothole_category_selective_routing(self):
+        """POST /api/v1/analyze with category='Pothole' routes to Model B and skips Model A."""
+        if not self.pothole_path.is_file():
+            self.skipTest(f"Pothole image not found at {self.pothole_path}")
+
+        print(f"\nAnalyzing pothole image: {self.pothole_path}...")
+        with open(self.pothole_path, "rb") as f:
+            resp = self.client.post(
+                "/api/v1/analyze",
+                data={"location": "Shoe Avenue", "category": "Pothole", "sample_fps": "1.0"},
+                files={"file": ("test3.jpg", f, "image/jpeg")},
+            )
+
+        self.assertEqual(resp.status_code, 200, resp.text)
+        data = resp.json()
+
+        # Check source media
+        self.assertEqual(data["source_media"]["type"], "image")
+
+        frames = data["frames"]
+        self.assertEqual(len(frames), 1)
+
+        f0 = frames[0]
+        # Trash Model A must be skipped
+        self.assertEqual(f0["trash_findings"]["model_version"], "skipped_by_category")
+        self.assertEqual(f0["trash_findings"]["total_items"], 0)
+
+        # Pothole Model B must be active
+        self.assertEqual(f0["road_defect_findings"]["model_version"], "BANTAI-Pothole-RFDETR-Nano-v5_20261107_061616")
+        self.assertGreaterEqual(f0["road_defect_findings"]["total_defects"], 1)
+
+        defects = f0["road_defect_findings"]["defects"]
+        print(f"[OK] Pothole category routing verified: Model A skipped, Model B detected {len(defects)} pothole(s).")
 
 
 if __name__ == "__main__":

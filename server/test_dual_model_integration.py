@@ -142,6 +142,11 @@ class TestDualModelIntegration(unittest.TestCase):
         self.assertEqual(d["bbox"], [100.0, 150.0, 150.0, 80.0])  # [x, y, w, h]
         self.assertEqual(d["confidence"], 0.892)
         self.assertGreater(d["estimated_diameter_cm"], 0)
+        self.assertEqual(d["confidence_pct"], 89)
+        self.assertIn("box_pct", d)
+        self.assertFalse(hasattr(service, "_mock_defects"))
+        self.assertTrue(service.is_weights_present())
+        self.assertTrue(service.is_fully_available())
 
     def test_hotspot_prioritization_formula(self):
         """Verify calibrated Section 6.3 Hotspot formula."""

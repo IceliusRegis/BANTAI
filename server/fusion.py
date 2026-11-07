@@ -2,20 +2,20 @@
 
 Implements:
 - Section 6.2 Unified Dual-Model Response Schema (Model A Trash + Model B Road Defects)
-- Section 6.3 Calibrated Municipal Hotspot Scoring Formula:
-    H = min(100, W_pile * N_pile + W_group * N_group + W_litter * N_litter + W_pothole * N_pothole)
+- Section 6.3 / AGENT_INTEGRATION_GUIDE.md Section 7 Calibrated Municipal Hotspot Scoring Formula:
+    H = min(100, 35.0 * N_pile + 15.0 * N_group + 3.0 * N_litter + sum(W_s * N_pothole,s))
+    where W_low = 25.0, W_moderate = 32.5, W_high = 40.0 (includes "Critical")
 - Smart frame filtering:
-    * Multi-frame video: only return frames containing valid target detections (surfacing confirmed
-      piles and groups of litter, while filtering out clean/empty and transient frames).
-    * Still image: return the staged single frame with complete regional grouping.
+    * Multi-frame video: only return frames containing valid target detections (confirmed
+      piles/groups of litter or pothole defects, while filtering out clean/empty frames).
+    * Still image: return the staged single frame with complete regional grouping and pothole findings.
 - Per-frame hotspot scoring and priority level.
 """
 from __future__ import annotations
 
-import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
-# Section 6.3 Calibrated Municipal Weights
+# Calibrated Municipal Weights (Guide Section 6.3 & AGENT_INTEGRATION_GUIDE.md Section 7)
 WEIGHT_PILE = 35.0
 WEIGHT_GROUP = 15.0
 WEIGHT_LITTER = 3.0
@@ -80,35 +80,40 @@ def fuse_dual_model_incident(
     """Constructs the unified dual-model response according to Guide Section 6.2 with smart frame filtering."""
     is_video = media_meta.get("type") == "video"
 
-    # Determine which frames qualify for presentation
-    # If the video contains multi-item regions (groups of litter or garbage piles),
-    # surface only those confirmed hazard frames so clean frames and transient single-box
-    # entries don't clutter the admin queue.
     has_multi_item_regions = any(
         (trash.get("regions", {}).get("garbage_piles", 0) > 0 or
          trash.get("regions", {}).get("groups_of_litter", 0) > 0)
         for trash in trash_findings_by_frame
     )
+    has_any_trash = any(trash.get("total_items", 0) > 0 for trash in trash_findings_by_frame)
 
-    retained_indices = []
-    for idx, entry in enumerate(frame_entries):
+    retained_indices: List[int] = []
+    for idx, _ in enumerate(frame_entries):
         trash = trash_findings_by_frame[idx] if idx < len(trash_findings_by_frame) else {}
+        road = road_findings_by_frame[idx] if idx < len(road_findings_by_frame) else {}
+
         total_items = trash.get("total_items", 0)
         piles = trash.get("regions", {}).get("garbage_piles", 0)
         groups = trash.get("regions", {}).get("groups_of_litter", 0)
+        defects = road.get("defects", [])
+        num_defects = len(defects)
 
         if is_video:
             if has_multi_item_regions:
-                # Keep frames containing groups or piles (or multi-item accumulations)
+                # Primary multi-item trash scene: keep confirmed group/pile frames,
+                # or frames with high-confidence pothole craters if no trash is present in the video
                 if piles > 0 or groups > 0 or total_items >= 2:
                     retained_indices.append(idx)
+            elif has_any_trash:
+                if total_items > 0 or num_defects > 0:
+                    retained_indices.append(idx)
             else:
-                # Keep frames with any valid detections
-                if total_items > 0:
+                # Road/pothole video (0 trash items): keep frames with detected potholes
+                if num_defects > 0:
                     retained_indices.append(idx)
         else:
-            # Still image: keep the frame if it has items or if single photo
-            if total_items > 0 or len(frame_entries) == 1:
+            # Still image: always retain the single staged photo
+            if total_items > 0 or num_defects > 0 or len(frame_entries) == 1:
                 retained_indices.append(idx)
 
     # Fallback: if all frames were filtered out (completely clean video), keep the first frame
@@ -120,7 +125,7 @@ def fuse_dual_model_incident(
     total_litter = 0
     potholes_by_severity: Dict[str, int] = {"low": 0, "moderate": 0, "high": 0}
 
-    frames_output = []
+    frames_output: List[Dict[str, Any]] = []
     for idx in retained_indices:
         entry = frame_entries[idx]
         trash = trash_findings_by_frame[idx] if idx < len(trash_findings_by_frame) else {}
@@ -131,14 +136,22 @@ def fuse_dual_model_incident(
         f_groups = r_counts.get("groups_of_litter", 0)
         f_litter = r_counts.get("individual_items", 0)
 
-        # Frame-level totals
+        f_potholes_by_sev: Dict[str, int] = {"low": 0, "moderate": 0, "high": 0}
+        for defect in road.get("defects", []):
+            sev_raw = str(defect.get("severity", "moderate")).lower()
+            sev_key = "high" if sev_raw in ("critical", "high") else ("low" if sev_raw == "low" else "moderate")
+            f_potholes_by_sev[sev_key] = f_potholes_by_sev.get(sev_key, 0) + 1
+            potholes_by_severity[sev_key] = potholes_by_severity.get(sev_key, 0) + 1
+
+        # Accumulate totals
         total_piles += f_piles
         total_groups += f_groups
         total_litter += f_litter
 
         # Frame-level Hotspot Score & Priority
-        f_score = calculate_hotspot_score(f_piles, f_groups, f_litter, {})
-        f_prio, _ = determine_priority_and_dispatch(f_score, f_piles > 0, False)
+        f_has_high_pothole = f_potholes_by_sev.get("high", 0) > 0
+        f_score = calculate_hotspot_score(f_piles, f_groups, f_litter, f_potholes_by_sev)
+        f_prio, _ = determine_priority_and_dispatch(f_score, f_piles > 0, f_has_high_pothole)
 
         frame_url = f"{media_url_prefix}/{incident_id}/frames/{entry['file_name']}"
 
@@ -154,13 +167,21 @@ def fuse_dual_model_incident(
             "frame_priority_level": f_prio,
         })
 
-    # Calculate overall incident Hotspot Score based on max frame hazard or combined totals
-    # For a video of the same incident, use the peak frame severity
+    # Calculate overall incident Hotspot Score based on peak frame hazard (for video) or combined totals (for image)
     if is_video and frames_output:
         hotspot_score = max(f["frame_hotspot_score"] for f in frames_output)
         incident_piles = max(f["trash_findings"].get("regions", {}).get("garbage_piles", 0) for f in frames_output)
         incident_groups = max(f["trash_findings"].get("regions", {}).get("groups_of_litter", 0) for f in frames_output)
         incident_litter = max(f["trash_findings"].get("regions", {}).get("individual_items", 0) for f in frames_output)
+        incident_potholes = max(len(f["road_defect_findings"].get("defects", [])) for f in frames_output)
+        best_pothole_frame = max(frames_output, key=lambda f: len(f["road_defect_findings"].get("defects", [])))
+        video_potholes_by_sev: Dict[str, int] = {"low": 0, "moderate": 0, "high": 0}
+        for defect in best_pothole_frame["road_defect_findings"].get("defects", []):
+            sev_raw = str(defect.get("severity", "moderate")).lower()
+            sev_key = "high" if sev_raw in ("critical", "high") else ("low" if sev_raw == "low" else "moderate")
+            video_potholes_by_sev[sev_key] = video_potholes_by_sev.get(sev_key, 0) + 1
+        summary_potholes_by_severity = video_potholes_by_sev
+        total_potholes = incident_potholes
     else:
         hotspot_score = calculate_hotspot_score(
             piles=total_piles,
@@ -171,9 +192,11 @@ def fuse_dual_model_incident(
         incident_piles = total_piles
         incident_groups = total_groups
         incident_litter = total_litter
+        summary_potholes_by_severity = potholes_by_severity
+        total_potholes = sum(potholes_by_severity.values())
 
     has_pile = incident_piles > 0
-    has_high_pothole = potholes_by_severity.get("high", 0) > 0
+    has_high_pothole = summary_potholes_by_severity.get("high", 0) > 0
     priority_level, dispatch_recommendation = determine_priority_and_dispatch(hotspot_score, has_pile, has_high_pothole)
 
     return {
@@ -193,8 +216,8 @@ def fuse_dual_model_incident(
             "total_garbage_piles": incident_piles,
             "total_litter_groups": incident_groups,
             "total_individual_litter": incident_litter,
-            "total_potholes": sum(potholes_by_severity.values()),
-            "potholes_by_severity": potholes_by_severity,
+            "total_potholes": total_potholes,
+            "potholes_by_severity": summary_potholes_by_severity,
         },
         "frames": frames_output,
     }

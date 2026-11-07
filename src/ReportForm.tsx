@@ -16,7 +16,7 @@ export type ReportSubmitData = NewReport & {
 }
 
 export default function ReportForm({ onSubmit }: { onSubmit: (report: ReportSubmitData) => void }) {
-  const [category, setCategory] = useState<Category>('Garbage pile')
+  const [category, setCategory] = useState<Category>('Trash')
   const [location, setLocation] = useState(locations[0])
   const [otherLocation, setOtherLocation] = useState('')
   const [description, setDescription] = useState('')
@@ -100,10 +100,11 @@ export default function ReportForm({ onSubmit }: { onSubmit: (report: ReportSubm
     // Attempt live API dual-model analysis if a real file was uploaded
     if (selectedFile) {
       setLoading(true)
-      setAnalyzingStatus('Running BANTAI Trash Detection & Spatial Grouping (Model A)…')
+      setAnalyzingStatus(category === 'Trash' ? 'Running BANTAI Model A (Grounding DINO-T Trash Detection & D-112 Spatial Grouping)…' : 'Running BANTAI Model B (RF-DETR Nano + Cell 8A Pothole Detection)…')
       try {
         const formData = new FormData()
         formData.append('file', selectedFile)
+        formData.append('category', category)
         formData.append('location', place)
         formData.append('description', description.trim())
 
@@ -184,13 +185,13 @@ export default function ReportForm({ onSubmit }: { onSubmit: (report: ReportSubm
         </div>
         {analyzingStatus && <p className="notice" role="status">{analyzingStatus}</p>}
         {error && <p className="form-error" role="alert">{error}</p>}
-        <div className="form-actions"><span>Dual-model AI analysis runs automatically upon submission.</span><button className="button button-primary" disabled={loading || (!photo && !demoPhoto && !selectedFile)}>{loading ? (analyzingStatus ? 'Analyzing AI Models…' : 'Reading media…') : 'Submit report'}</button></div>
+        <div className="form-actions"><span>Category-targeted AI analysis runs automatically upon submission.</span><button className="button button-primary" disabled={loading || (!photo && !demoPhoto && !selectedFile)}>{loading ? (analyzingStatus ? 'Analyzing AI Models…' : 'Reading media…') : 'Submit report'}</button></div>
       </form>
     </section>
-    <aside className="panel guidance-panel"><div className="section-index">AI DUAL-MODEL PIPELINE</div><h2>One upload. Dual AI analysis.</h2>
+    <aside className="panel guidance-panel"><div className="section-index">AI DUAL-MODEL PIPELINE</div><h2>Category-targeted AI analysis.</h2>
       <div className="guide-item"><span>01</span><p><strong>Single-Pass Ingestion:</strong> Photos are staged directly; videos are sampled at 1.0 FPS once.</p></div>
       <div className="guide-item"><span>02</span><p><strong>Model A (Trash Detector):</strong> 3-Model Consensus with D-112 Disjoint Spatial Grouping.</p></div>
-      <div className="guide-item"><span>03</span><p><strong>Model B (Road Defects):</strong> RF-DETR Nano with SAHI tiling & pothole severity indexing.</p></div>
+      <div className="guide-item"><span>03</span><p><strong>Model B (Road Defects):</strong> RF-DETR Nano (v5) + Cell 8A Vision Engine with anti-manhole filtering, DBSCAN crater fusion &amp; severity indexing.</p></div>
       <p className="prototype-note">Admin validation in the Review Queue confirms detections and updates barangay hotspot priorities.</p>
     </aside>
   </div>

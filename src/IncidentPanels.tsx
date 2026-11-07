@@ -16,8 +16,12 @@ export function Evidence({ report, showBoxes = false }: { report: Observation; s
     )
   }
 
-  // If showBoxes is false or no detections/regions exist, render clean image only (Regular User view)
-  const hasBoxes = showBoxes && ((report.detections && report.detections.length > 0) || (report.regions && report.regions.length > 0))
+  // If showBoxes is false or no detections/regions/defects exist, render clean image only (Regular User view)
+  const hasBoxes = showBoxes && (
+    (report.detections && report.detections.length > 0) ||
+    (report.regions && report.regions.length > 0) ||
+    (report.defects && report.defects.length > 0)
+  )
   if (!hasBoxes) {
     return <img className="evidence-image" src={report.photo} alt={`Submitted ${report.category.toLowerCase()} at ${report.location}`} />
   }
@@ -135,6 +139,56 @@ export function Evidence({ report, showBoxes = false }: { report: Observation; s
                   fill="#ffffff"
                   fontSize={fontSize}
                   fontWeight="600"
+                  fontFamily="system-ui, -apple-system, sans-serif"
+                >
+                  {labelText}
+                </text>
+              </g>
+            )
+          })}
+
+          {/* 3. Model B Pothole Defect Boxes */}
+          {report.defects?.map((defect, idx) => {
+            const [bx, by, bw, bh] = defect.bbox
+            const isHigh = defect.severity === 'high'
+            const isMod = defect.severity === 'moderate'
+            const strokeColor = isHigh ? '#dc2626' : isMod ? '#ea580c' : '#16a34a'
+            const fillTint = isHigh ? 'rgba(220, 38, 38, 0.12)' : isMod ? 'rgba(234, 88, 12, 0.12)' : 'rgba(22, 163, 74, 0.12)'
+            const confPct = defect.confidence_pct ?? Math.round(defect.confidence * 100)
+            const sevLabel = defect.raw_severity || (isHigh ? 'Critical' : isMod ? 'Moderate' : 'Low')
+            const labelText = `Pothole [${sevLabel}] ${confPct}%`
+            const fontSize = Math.max(15, Math.round(imgW * 0.015))
+            const padY = Math.round(fontSize * 0.35)
+            const badgeH = fontSize + padY * 2
+            const badgeW = labelText.length * (fontSize * 0.58) + 14
+            const badgeY = Math.max(0, by - badgeH - 2)
+
+            return (
+              <g key={`def-${defect.defect_id || idx}`}>
+                <rect
+                  x={bx}
+                  y={by}
+                  width={bw}
+                  height={bh}
+                  fill={fillTint}
+                  stroke={strokeColor}
+                  strokeWidth={Math.max(3, imgW * 0.003)}
+                  rx="3"
+                />
+                <rect
+                  x={bx}
+                  y={badgeY}
+                  width={badgeW}
+                  height={badgeH}
+                  fill={strokeColor}
+                  rx="3"
+                />
+                <text
+                  x={bx + 7}
+                  y={badgeY + fontSize + (padY * 0.25)}
+                  fill="#ffffff"
+                  fontSize={fontSize}
+                  fontWeight="700"
                   fontFamily="system-ui, -apple-system, sans-serif"
                 >
                   {labelText}
@@ -333,7 +387,7 @@ export function VideoMonitor({
   onAddRealObservations?: (observations: Observation[]) => void
 }) {
   const [location, setLocation] = useState(locations[0])
-  const [category, setCategory] = useState<Category>('Garbage pile')
+  const [category, setCategory] = useState<Category>('Trash')
   const [generated, setGenerated] = useState(false)
   const [videoFile, setVideoFile] = useState<File | null>(null)
   const [processingVideo, setProcessingVideo] = useState(false)
@@ -349,6 +403,7 @@ export function VideoMonitor({
       const formData = new FormData()
       formData.append('file', videoFile)
       formData.append('location', location)
+      formData.append('category', category)
       formData.append('sample_fps', '1.0')
 
       const res = await fetch('/api/v1/analyze', {
@@ -370,9 +425,7 @@ export function VideoMonitor({
           const defects = frame.road_defect_findings?.defects || []
           const hasPile = regions.some(r => r.category === 'garbage_pile')
 
-          let obsCat: Category = 'Garbage pile'
-          if (hasPile) obsCat = 'Garbage pile'
-          else if (regions.length > 0) obsCat = 'Garbage pile'
+          const obsCat: Category = category
 
           return {
             id: `VID-${result.incident_id.slice(-6)}-${idx + 1}`,
@@ -382,7 +435,7 @@ export function VideoMonitor({
             category: obsCat,
             observedAt: now,
             submittedAt: now,
-            description: `1.0 FPS extraction frame ${frame.frame_index} (t=${timestamp}s). Single-pass Model A trash detection.`,
+            description: `1.0 FPS extraction frame ${frame.frame_index} (t=${timestamp}s). Category-selective ${category === 'Trash' ? 'Model A Trash' : 'Model B Pothole Cell 8A'} detection.`,
             photo: frame.frame_url,
             clipTime: `00:${String(Math.floor(frame.timestamp_sec)).padStart(2, '0')}`,
             confidence: 90,
@@ -409,12 +462,18 @@ export function VideoMonitor({
     }
   }
 
-  return <section className="panel"><div className="panel-heading"><div><div className="section-index">CAMERA MONITORING</div><h2>Video simulation & media detection</h2><p>Process a real video (.mp4) through Model A or simulate automated patrol captures.</p></div></div>
+  return <section className="panel"><div className="panel-heading"><div><div className="section-index">CAMERA MONITORING</div><h2>Video simulation & media detection</h2><p>Process a real video (.mp4) through Model A (Trash) or Model B (Pothole Cell 8A) or simulate automated patrol captures.</p></div></div>
     <div className="form-body">
       {/* Real Video Upload Section */}
       <div style={{ padding: '16px', background: 'rgba(43, 147, 72, 0.05)', borderRadius: '8px', border: '1px solid #b7e4c7', marginBottom: '20px' }}>
-        <strong style={{ display: 'block', fontSize: '15px', marginBottom: '4px', color: '#1b4332' }}>Run Live Video Detection (Model A)</strong>
-        <p style={{ fontSize: '13px', color: '#40916c', marginBottom: '12px' }}>Upload a street patrol video (e.g., Motion_Extract_Testing_2.mp4). The backend extracts 1.0 FPS frames, runs 3-model consensus + D-112 spatial grouping, and adds confirmed hazard frames to the Review queue.</p>
+        <strong style={{ display: 'block', fontSize: '15px', marginBottom: '4px', color: '#1b4332' }}>Run Category-Targeted Video Detection</strong>
+        <p style={{ fontSize: '13px', color: '#40916c', marginBottom: '12px' }}>Upload a street patrol video (e.g., Motion_Extract_Testing_2.mp4). Select the target category below: 'Trash' runs Model A (Stage 5 Champion 3-model consensus + spatial grouping); 'Pothole' runs Model B (RF-DETR Nano Cell 8A). Only frames with confirmed detections are added to the Review queue.</p>
+        <div style={{ marginBottom: '12px', display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+          <label style={{ fontSize: '13px', fontWeight: 600, color: '#1b4332' }}>Target Category & AI Model:</label>
+          <select value={category} onChange={e => setCategory(e.target.value as Category)} style={{ padding: '6px 12px', borderRadius: '6px', border: '1px solid #b7e4c7', background: '#fff', fontWeight: 500 }}>
+            {categories.map(c => <option key={c} value={c}>{c === 'Trash' ? 'Trash (Model A - Grounding DINO-T Stage 5)' : 'Pothole (Model B - RF-DETR Nano Cell 8A)'}</option>)}
+          </select>
+        </div>
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
           <input
             ref={videoInputRef}
@@ -432,7 +491,7 @@ export function VideoMonitor({
             disabled={!videoFile || processingVideo}
             onClick={handleRealVideoProcess}
           >
-            {processingVideo ? 'Extracting & Running Model A…' : 'Process Video with AI Model'}
+            {processingVideo ? `Extracting & Running ${category === 'Trash' ? 'Model A (Trash)' : 'Model B (Pothole)'}…` : `Process Video (${category} Model)`}
           </button>
         </div>
         {videoError && <p className="form-error" style={{ marginTop: '8px' }}>{videoError}</p>}

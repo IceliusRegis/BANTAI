@@ -1,4 +1,4 @@
-export const categories = ['Garbage pile', 'Pothole', 'Road surface damage'] as const
+export const categories = ['Trash', 'Pothole'] as const
 export type Category = typeof categories[number]
 export const locations = ['J. P. Rizal St. near Market', 'Shoe Avenue corner E. Dela Paz', 'P. Burgos St. riverside', 'Marikina Bridge approach']
 export const incidentStatuses = ['Open', 'For inspection', 'In progress', 'Resolved'] as const
@@ -43,7 +43,14 @@ export type RoadDefect = {
   severity: 'low' | 'moderate' | 'high'
   estimated_diameter_cm: number
   bbox: [number, number, number, number]
+  label?: string
+  raw_severity?: string
+  xyxy?: [number, number, number, number]
+  box_pct?: { x: number; y: number; w: number; h: number }
+  boxPct?: { x: number; y: number; w: number; h: number }
   confidence: number
+  confidence_pct?: number
+  confidencePct?: number
 }
 
 export type RoadDefectFindings = {
@@ -130,10 +137,10 @@ export function normalizeLocation(value: string) { return value.trim().replace(/
 export function seedStore(now = new Date()): Store {
   const ago = (hours: number) => new Date(now.getTime() - hours * 3600000).toISOString()
   const incidents: Incident[] = [
-    { id: 'INC-001', category: 'Garbage pile', location: locations[0], status: 'Open', note: 'Awaiting barangay cleanup assessment.', updatedAt: ago(3) },
+    { id: 'INC-001', category: 'Trash', location: locations[0], status: 'Open', note: 'Awaiting barangay cleanup assessment.', updatedAt: ago(3) },
     { id: 'INC-002', category: 'Pothole', location: locations[1], status: 'For inspection', note: 'Maintenance team will inspect the reported road defect.', updatedAt: ago(5) },
-    { id: 'INC-003', category: 'Road surface damage', location: locations[3], status: 'In progress', note: 'Inspection completed. Maintenance coordination is in progress.', updatedAt: ago(8) },
-    { id: 'INC-004', category: 'Garbage pile', location: locations[2], status: 'Resolved', note: 'Cleanup completed and verified by the barangay team.', updatedAt: ago(12) },
+    { id: 'INC-003', category: 'Pothole', location: locations[3], status: 'In progress', note: 'Inspection completed. Maintenance coordination is in progress.', updatedAt: ago(8) },
+    { id: 'INC-004', category: 'Trash', location: locations[2], status: 'Resolved', note: 'Cleanup completed and verified by the barangay team.', updatedAt: ago(12) },
   ]
   const observations: Observation[] = []
   for (const [index, incident] of incidents.entries()) {
@@ -146,7 +153,7 @@ export function seedStore(now = new Date()): Store {
       confidence: 90 - n, review: 'Validated', incidentId: incident.id, reviewNote: 'Validated by barangay admin.',
     })
   }
-  observations.unshift({ id: 'OBS-013', reporter: 'Sample resident', source: 'Resident photo', location: locations[0], category: 'Garbage pile', observedAt: ago(1), submittedAt: ago(.5), description: 'Another observation of piled garbage beside the market entrance. Please check whether this is the existing incident.', confidence: 93, review: 'Pending review', reviewNote: '' })
+  observations.unshift({ id: 'OBS-013', reporter: 'Sample resident', source: 'Resident photo', location: locations[0], category: 'Trash', observedAt: ago(1), submittedAt: ago(.5), description: 'Another observation of piled garbage beside the market entrance. Please check whether this is the existing incident.', confidence: 93, review: 'Pending review', reviewNote: '' })
   return { incidents, observations }
 }
 
