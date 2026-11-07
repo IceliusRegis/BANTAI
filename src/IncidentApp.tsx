@@ -1,19 +1,17 @@
 import { useState, useEffect } from 'react'
 import {
   seedStore,
-  rankHotspots,
   residentId,
   addResidentReport,
   reviewReport,
   updateIncident,
-  addVideoObservations,
 } from './incidents'
 import type { Store } from './incidents'
 import ReportForm from './ReportForm'
 import { MyReports, ReviewQueue, Incidents, VideoMonitor } from './IncidentPanels'
 import './workflow.css'
 
-const STORAGE_KEY = 'bantai_session_store_v2'
+const STORAGE_KEY = 'bantai_municipal_session_v3'
 
 function loadSavedStore(): Store | null {
   try {
@@ -37,7 +35,7 @@ export default function IncidentApp() {
   const [selectedStreet, setSelectedStreet] = useState<string>('')
   const [notice, setNotice] = useState<string>('')
 
-  // Persist store to sessionStorage across accidental page refreshes
+  // Persist session store across page refreshes
   useEffect(() => {
     try {
       sessionStorage.setItem(STORAGE_KEY, JSON.stringify(store))
@@ -47,14 +45,9 @@ export default function IncidentApp() {
   }, [store])
 
   const pendingCount = store.observations.filter(o => o.review === 'Pending review').length
-  const myReportsCount = store.observations.filter(o => o.reporter === residentId).length
-
-  function handleResetDemo() {
-    sessionStorage.removeItem(STORAGE_KEY)
-    setStore(seedStore())
-    setSelectedStreet('')
-    setNotice('Demo data reset to fresh starting state.')
-  }
+  const myReportsCount = store.observations.filter(
+    o => o.reporter.includes('Verified Resident') || o.reporter === residentId
+  ).length
 
   function switchRole(next: 'user' | 'admin') {
     setMode(next)
@@ -66,63 +59,50 @@ export default function IncidentApp() {
     }
   }
 
-  // Strict Privacy Navigation
   const navigation =
     mode === 'user'
       ? [
-          { key: 'submit', label: '➕ Report a Problem' },
-          { key: 'mine', label: `📋 My Sent Reports (${myReportsCount})` },
+          { key: 'submit', label: '➕ Submit Report' },
+          { key: 'mine', label: `📋 My Reports (${myReportsCount})` },
         ]
       : [
           { key: 'review', label: `📍 Priority Hotspots & Review (${pendingCount})` },
-          { key: 'incidents', label: '📋 All Street Records' },
+          { key: 'incidents', label: '📋 Incident Records' },
           { key: 'video', label: '🎥 Patrol Scanner' },
         ]
 
   return (
     <div className="app-shell workflow">
-      {/* Header with Role Switcher & Reset Button */}
+      {/* Site Header */}
       <header className="site-header">
         <div className="page-width header-top">
           <div>
             <div className="brand-name">
-              BANTAI <span>STREET MONITOR</span>
+              BANTAI <span>STREET & SANITATION INTELLIGENCE</span>
             </div>
-            <div className="brand-subtitle">BARANGAY ROAD INFRASTRUCTURE & CLEANLINESS</div>
+            <div className="brand-subtitle">MUNICIPAL INCIDENT MONITORING · BARANGAY SANTA ELENA</div>
           </div>
 
-          <div className="header-right" style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <div className="header-right" style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
             <button
               type="button"
               className={`button ${mode === 'user' ? 'button-primary' : 'button-outline'}`}
               onClick={() => switchRole('user')}
-              title="Resident Mode: Submit reports and track their status"
             >
-              👤 Resident (Grandma Mode)
+              Resident Portal
             </button>
 
             <button
               type="button"
               className={`button ${mode === 'admin' ? 'button-primary' : 'button-outline'}`}
               onClick={() => switchRole('admin')}
-              title="Admin Mode: Review queue, location hotspots, and all street records"
             >
-              🛡️ Barangay Admin
-            </button>
-
-            <button
-              type="button"
-              className="button button-outline"
-              style={{ fontSize: '11px', padding: '4px 8px', height: '30px', color: '#666', borderStyle: 'dashed' }}
-              onClick={handleResetDemo}
-              title="Reset data back to seed state"
-            >
-              🔄 Reset Demo
+              Barangay Operations {pendingCount > 0 && <span className="count-pill" style={{ marginLeft: '6px' }}>{pendingCount}</span>}
             </button>
           </div>
         </div>
 
-        {/* Navigation tabs */}
+        {/* Primary Navigation */}
         <nav className="nav-bar" aria-label="Main navigation">
           <div className="page-width nav-inner">
             {navigation.map(item => (
@@ -146,21 +126,21 @@ export default function IncidentApp() {
       {/* Main Content Area */}
       <main className="page-width main-content">
         <div className="eyebrow">
-          {mode === 'admin' ? '🛡️ BARANGAY OPERATIONS PORTAL' : '👤 RESIDENT COMMUNITY PORTAL'}
+          {mode === 'admin' ? 'BARANGAY OPERATIONS MANAGEMENT' : 'SANTA ELENA CITIZEN PORTAL'}
         </div>
 
         <h1>
-          {page === 'submit' && 'Report a Street Problem'}
-          {page === 'mine' && 'My Sent Reports & Status'}
+          {page === 'submit' && 'Submit an Incident Report'}
+          {page === 'mine' && 'My Submitted Reports'}
           {page === 'review' && 'Priority Hotspots & Review Queue'}
-          {page === 'incidents' && 'All Street Records & Cleanup Progress'}
-          {page === 'video' && 'Patrol Camera Video Scanner'}
+          {page === 'incidents' && 'Street Incident Records'}
+          {page === 'video' && 'Patrol Scanner & Media Analysis'}
         </h1>
 
         <p>
           {mode === 'user'
-            ? 'Report road potholes and trash piles in your neighborhood. Track each report until it is cleaned and repaired.'
-            : 'Review incoming community reports, inspect scanned bounding boxes, and manage barangay cleanup priorities.'}
+            ? 'Report potholes, surface damage, and waste accumulation in your area. Track status updates as maintenance crews inspect and resolve issues.'
+            : 'Review verified citizen reports, examine automated bounding boxes, and manage barangay maintenance priorities.'}
         </p>
 
         {notice && (
@@ -169,21 +149,21 @@ export default function IncidentApp() {
           </div>
         )}
 
-        {/* --- RESIDENT SCREENS (STRICT PRIVACY) --- */}
+        {/* Resident Portal Views */}
         {mode === 'user' && page === 'submit' && (
           <ReportForm
             onSubmit={report => {
-              const id = `OBS-${crypto.randomUUID().slice(0, 6).toUpperCase()}`
+              const id = `OBS-2026-${crypto.randomUUID().slice(0, 5).toUpperCase()}`
               setStore(s => addResidentReport(s, report, id, new Date().toISOString()))
               setPage('mine')
-              setNotice(`✅ Report #${id} submitted successfully! You can track its progress below, or switch to Barangay Admin at the top to review it.`)
+              setNotice(`Report #${id} submitted successfully. You can monitor its status under My Reports.`)
             }}
           />
         )}
 
         {mode === 'user' && page === 'mine' && <MyReports store={store} />}
 
-        {/* --- ADMIN SCREENS --- */}
+        {/* Barangay Operations Views */}
         {mode === 'admin' && page === 'review' && (
           <ReviewQueue
             store={store}
@@ -198,13 +178,13 @@ export default function IncidentApp() {
                   target,
                   note,
                   new Date().toISOString(),
-                  `INC-${crypto.randomUUID().slice(0, 6).toUpperCase()}`
+                  `INC-MAR-${crypto.randomUUID().slice(0, 4).toUpperCase()}`
                 )
               )
               setNotice(
                 decision === 'reject'
-                  ? 'Report declined with note saved.'
-                  : 'Report approved! Street Hotspot priorities and incident records have been updated.'
+                  ? 'Report declined and marked with reason.'
+                  : 'Report approved. Street Hotspot priority and incident records have been updated.'
               )
             }}
           />
@@ -215,34 +195,30 @@ export default function IncidentApp() {
             store={store}
             onUpdate={(id, status, note) => {
               setStore(s => updateIncident(s, id, status, note, new Date().toISOString()))
-              setNotice(`Updated ${id} to "${status}".`)
+              setNotice(`Updated ${id} status to "${status}".`)
             }}
           />
         )}
 
         {mode === 'admin' && page === 'video' && (
           <VideoMonitor
-            onGenerate={(location, category) => {
-              setStore(s =>
-                addVideoObservations(
-                  s,
-                  location,
-                  category,
-                  new Date().toISOString(),
-                  crypto.randomUUID().slice(0, 6)
-                )
-              )
-              setNotice('Patrol video clip simulated and added to the review queue.')
-            }}
             onAddRealObservations={newObs => {
               setStore(s => ({ ...s, observations: [...newObs, ...s.observations] }))
-              setNotice(`Scanned video added to the review queue as a single entry with frame-by-frame stepper.`)
+              setNotice(`Patrol video clip processed and registered into the review queue.`)
               setPage('review')
             }}
             onReview={() => setPage('review')}
           />
         )}
       </main>
+
+      {/* Production Municipal Footer */}
+      <footer className="site-footer" style={{ borderTop: '1px solid #dce5df', background: '#fff', marginTop: 'auto', padding: '16px 0' }}>
+        <div className="page-width footer-inner" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', color: '#66746e' }}>
+          <span>BANTAI Municipal Street & Sanitation Intelligence Platform</span>
+          <span>Pilot Deployment: Barangay Santa Elena, Marikina City</span>
+        </div>
+      </footer>
     </div>
   )
 }

@@ -19,7 +19,19 @@ from typing import Any, Dict, List, Tuple
 from PIL import Image, ImageOps
 
 # Connect to BANTAI-Modeling- root if present
-DEFAULT_MODELING_ROOT = Path(r"C:\Users\Samuel\Desktop\IA-MODEL TRAINING\BANTAI-Modeling-")
+def _resolve_modeling_root() -> Path:
+    env_root = os.environ.get("BANTAI_MODELING_ROOT")
+    if env_root and Path(env_root).is_dir():
+        return Path(env_root)
+    for candidate in [
+        Path(r"C:\Users\Samuel\Desktop\IA-MODEL TRAINING\BANTAI-Modeling-"),
+        Path(r"c:\Users\Justine\Documents\Python\Project Image-object Detection"),
+    ]:
+        if candidate.is_dir():
+            return candidate
+    return Path(r"C:\Users\Samuel\Desktop\IA-MODEL TRAINING\BANTAI-Modeling-")
+
+DEFAULT_MODELING_ROOT = _resolve_modeling_root()
 if DEFAULT_MODELING_ROOT.is_dir() and str(DEFAULT_MODELING_ROOT) not in sys.path:
     sys.path.insert(0, str(DEFAULT_MODELING_ROOT))
 

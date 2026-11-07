@@ -1,6 +1,15 @@
-export const categories = ['Garbage pile', 'Pothole', 'Road surface damage'] as const
+export const categories = ['Pothole', 'Garbage pile', 'Road surface damage'] as const
 export type Category = typeof categories[number]
-export const locations = ['J. P. Rizal St. near Market', 'Shoe Avenue corner E. Dela Paz', 'P. Burgos St. riverside', 'Marikina Bridge approach']
+
+export const locations = [
+  'J. P. Rizal St. near Market',
+  'Shoe Avenue corner E. Dela Paz',
+  'P. Burgos St. riverside',
+  'Marikina Bridge approach',
+  'Kapitan Moy St. alley',
+  'Champagnat St. junction',
+] as const
+
 export const incidentStatuses = ['Open', 'For inspection', 'In progress', 'Resolved'] as const
 export type IncidentStatus = typeof incidentStatuses[number]
 
@@ -32,6 +41,13 @@ export type UiVideoFrame = {
   boxes: UiDetectionBox[]
   potholeCount: number
   trashCount: number
+  detections?: TrashDetection[]
+  regions?: TrashRegion[]
+  defects?: RoadDefect[]
+  width?: number
+  height?: number
+  frameHotspotScore?: number
+  framePriorityLevel?: 'CRITICAL' | 'ELEVATED' | 'ROUTINE'
 }
 
 export type TrashDetection = {
@@ -42,6 +58,7 @@ export type TrashDetection = {
   model_score: number
   bbox: [number, number, number, number]
   box_pct?: UiBoxPct
+  confidence_pct?: number
 }
 
 export type TrashRegion = {
@@ -67,7 +84,7 @@ export type TrashFindings = {
   }
   items_by_bantai_category: Record<string, number>
   region_list: TrashRegion[]
-  detections?: TrashDetection[]
+  detections: TrashDetection[]
 }
 
 export type RoadDefect = {
@@ -99,13 +116,18 @@ export type DualModelFrameResult = {
   boxes?: UiDetectionBox[]
   pothole_count?: number
   trash_count?: number
+  frame_hotspot_score?: number
+  frame_priority_level?: 'CRITICAL' | 'ELEVATED' | 'ROUTINE'
 }
 
 export type UnifiedIncidentResponse = {
   incident_id: string
   source_media: {
     filename: string
-    type: 'video' | 'image'
+    type: 'image' | 'video'
+    sha256?: string
+    width?: number
+    height?: number
     fps?: number
     duration_sec?: number
   }
@@ -120,11 +142,13 @@ export type UnifiedIncidentResponse = {
   dispatch_recommendation: string
   summary?: {
     total_frames: number
+    total_extracted_frames?: number
     total_potholes: number
     total_trash_items: number
     total_garbage_piles: number
     total_litter_groups: number
     total_individual_litter: number
+    potholes_by_severity?: Record<string, number>
   }
   frames: DualModelFrameResult[]
 }
@@ -132,7 +156,7 @@ export type UnifiedIncidentResponse = {
 export type Observation = {
   id: string
   reporter: string
-  source: 'Resident photo' | 'Video observation'
+  source: 'Resident photo' | 'Patrol dashcam' | 'CCTV feed'
   location: string
   category: Category
   observedAt: string
@@ -152,32 +176,61 @@ export type Observation = {
   previewVideoUrl?: string
   dualModelResult?: UnifiedIncidentResponse
   regions?: TrashRegion[]
+  detections?: TrashDetection[]
   defects?: RoadDefect[]
   hotspotScore?: number
   priorityLevel?: 'CRITICAL' | 'ELEVATED' | 'ROUTINE'
+  imageWidth?: number
+  imageHeight?: number
 }
 
 export function computeHotspotScore(
   piles: number,
   groups: number,
   litter: number,
-  potholesBySeverity: { low?: number; moderate?: number; high?: number } = {},
+  potholesBySeverity: { low?: number; moderate?: number; high?: number } = {}
 ): number {
-  const W_pile = 35.0
-  const W_group = 15.0
-  const W_litter = 3.0
-  const W_pothole: Record<string, number> = { low: 25.0, moderate: 32.5, high: 40.0 }
-  let score = piles * W_pile + groups * W_group + litter * W_litter
-  for (const [sev, count] of Object.entries(potholesBySeverity)) {
-    score += (count || 0) * (W_pothole[sev] || 30.0)
-  }
-  return Math.min(100.0, Math.max(0.0, Math.round(score * 10) / 10))
+  const wPile = 35.0
+  const wGroup = 15.0
+  const wLitter = 3.0
+  const wLow = 25.0
+  const wMod = 32.5
+  const wHigh = 40.0
+
+  const score =
+    (wPile * Math.max(0, piles)) +
+    (wGroup * Math.max(0, groups)) +
+    (wLitter * Math.max(0, litter)) +
+    (wLow * (potholesBySeverity.low || 0)) +
+    (wMod * (potholesBySeverity.moderate || 0)) +
+    (wHigh * (potholesBySeverity.high || 0))
+
+  return Math.min(100, Math.round(score * 10) / 10)
 }
 
-export type Incident = { id: string; category: Category; location: string; status: IncidentStatus; note: string; updatedAt: string }
-export type Store = { observations: Observation[]; incidents: Incident[] }
-export type RankedIncident = Incident & { frequency: number; latest: string }
-export type NewReport = Pick<Observation, 'location' | 'category' | 'observedAt' | 'description' | 'photo'> & {
+export type Incident = {
+  id: string
+  category: Category
+  location: string
+  status: IncidentStatus
+  note: string
+  updatedAt: string
+}
+
+export type Store = {
+  observations: Observation[]
+  incidents: Incident[]
+}
+
+export type RankedIncident = Incident & {
+  frequency: number
+  latest: string
+}
+
+export type NewReport = Pick<
+  Observation,
+  'location' | 'category' | 'observedAt' | 'description' | 'photo'
+> & {
   mediaType?: 'image' | 'video'
   boxes?: UiDetectionBox[]
   frames?: UiVideoFrame[]
@@ -186,13 +239,23 @@ export type NewReport = Pick<Observation, 'location' | 'category' | 'observedAt'
   previewVideoUrl?: string
   dualModelResult?: UnifiedIncidentResponse
   regions?: TrashRegion[]
+  detections?: TrashDetection[]
   defects?: RoadDefect[]
   hotspotScore?: number
   priorityLevel?: 'CRITICAL' | 'ELEVATED' | 'ROUTINE'
+  imageWidth?: number
+  imageHeight?: number
 }
 
-export const residentId = 'Demo resident'
-export function normalizeLocation(value: string) { return value.trim().replace(/\s+/g, ' ').toLowerCase() }
+export const residentId = 'Maria Santos (Verified Resident)'
+
+export function normalizeLocation(value: string) {
+  return value.trim().replace(/\s+/g, ' ').toLowerCase()
+}
+
+function hoursAgo(h: number, now = new Date()): string {
+  return new Date(now.getTime() - h * 3600000).toISOString()
+}
 
 export function seedStore(now = new Date()): Store {
   const ago = (hours: number) => new Date(now.getTime() - hours * 3600000).toISOString()

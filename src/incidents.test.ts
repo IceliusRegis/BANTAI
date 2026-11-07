@@ -6,7 +6,7 @@ test('user submission, duplicate consolidation, status update and resolved ranki
   const now = '2026-10-13T04:00:00.000Z'
   let store = seedStore(new Date(now))
   const before = rankIncidents(store)[0].frequency
-  store = addResidentReport(store, { category: 'Garbage pile', location: 'J. P. Rizal St. near Market', observedAt: now, description: 'Demo report' }, 'TEST-1', now)
+  store = addResidentReport(store, { category: 'Garbage pile', location: 'J. P. Rizal St. near Market', observedAt: now, description: 'Overflowing roadside collection' }, 'TEST-1', now)
   assert.equal(rankIncidents(store)[0].frequency, before)
   store = reviewReport(store, 'TEST-1', 'validate', 'INC-001', 'Same physical issue', now, 'NEW-1')
   assert.equal(store.incidents.length, 4)
