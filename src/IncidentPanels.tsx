@@ -1,18 +1,149 @@
 import { useState, useRef } from 'react'
 import { categories, locations, duplicateCandidates, incidentStatuses } from './incidents'
-import type { Category, IncidentStatus, Observation, Store, TrashRegion, RoadDefect, UnifiedIncidentResponse } from './incidents'
+import type { Category, IncidentStatus, Observation, Store, TrashRegion, TrashDetection, RoadDefect, UnifiedIncidentResponse } from './incidents'
 
 export function formatDate(value: string) { return new Date(value).toLocaleString('en-PH', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) }
 export function Status({ value }: { value: string }) { return <span className={`incident-status status-${value.toLowerCase().replace(/ /g, '-')}`}>{value}</span> }
 
-export function Evidence({ report }: { report: Observation }) {
-  return report.photo ? (
-    <img className="evidence-image" src={report.photo} alt={`Submitted ${report.category.toLowerCase()} at ${report.location}`} />
-  ) : (
-    <div className="evidence-placeholder">
-      <span aria-hidden="true">▧</span>
-      <strong>{report.source === 'Video observation' ? `Video observation · ${report.clipTime || 'Frame'}` : 'Demo photo placeholder'}</strong>
-      <small>{report.category}</small>
+export function Evidence({ report, showBoxes = false }: { report: Observation; showBoxes?: boolean }) {
+  if (!report.photo) {
+    return (
+      <div className="evidence-placeholder">
+        <span aria-hidden="true">▧</span>
+        <strong>{report.source === 'Video observation' ? `Video observation · ${report.clipTime || 'Frame'}` : 'Demo photo placeholder'}</strong>
+        <small>{report.category}</small>
+      </div>
+    )
+  }
+
+  // If showBoxes is false or no detections/regions exist, render clean image only (Regular User view)
+  const hasBoxes = showBoxes && ((report.detections && report.detections.length > 0) || (report.regions && report.regions.length > 0))
+  if (!hasBoxes) {
+    return <img className="evidence-image" src={report.photo} alt={`Submitted ${report.category.toLowerCase()} at ${report.location}`} />
+  }
+
+  // Admin View: Responsive SVG Bounding Box and Region Overlay
+  const imgW = report.imageWidth || 1280
+  const imgH = report.imageHeight || 720
+
+  return (
+    <div style={{ position: 'relative', width: '100%', height: '100%', minHeight: '200px', maxHeight: '360px', background: '#eaf0ec', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+      <div style={{ position: 'relative', maxWidth: '100%', maxHeight: '100%', aspectRatio: `${imgW} / ${imgH}`, display: 'flex' }}>
+        <img
+          src={report.photo}
+          alt={`Submitted ${report.category.toLowerCase()} at ${report.location}`}
+          style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
+        />
+        <svg
+          viewBox={`0 0 ${imgW} ${imgH}`}
+          preserveAspectRatio="xMidYMid meet"
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            width: '100%',
+            height: '100%',
+            pointerEvents: 'none',
+          }}
+        >
+          {/* 1. Multi-item Region Boxes (k >= 2) */}
+          {report.regions?.filter(r => r.item_count >= 2).map((reg, idx) => {
+            const [bx, by, bw, bh] = reg.bbox
+            const isPile = reg.category === 'garbage_pile'
+            const strokeColor = isPile ? '#ff8c00' : '#00b4d8'
+            const bannerBg = isPile ? 'rgba(255, 140, 0, 0.95)' : 'rgba(0, 180, 216, 0.95)'
+            const labelText = isPile ? `Garbage Pile (${reg.item_count} items)` : `Group of Individual Litter (${reg.item_count} items)`
+            const fontSize = Math.max(16, Math.round(imgW * 0.016))
+            const bannerPad = Math.round(fontSize * 0.4)
+            const bannerH = fontSize + bannerPad * 2
+            const textW = labelText.length * (fontSize * 0.58)
+
+            return (
+              <g key={`reg-${reg.region_id || idx}`}>
+                <rect
+                  x={bx - 4}
+                  y={by - 4}
+                  width={bw + 8}
+                  height={bh + 8}
+                  fill={isPile ? 'rgba(255, 140, 0, 0.08)' : 'rgba(0, 180, 216, 0.08)'}
+                  stroke={strokeColor}
+                  strokeWidth={Math.max(3, imgW * 0.003)}
+                  strokeDasharray="8 6"
+                  rx="4"
+                />
+                <rect
+                  x={bx - 4}
+                  y={Math.max(0, by - 4 - bannerH)}
+                  width={textW + 16}
+                  height={bannerH}
+                  fill={bannerBg}
+                  rx="3"
+                />
+                <text
+                  x={bx - 4 + 8}
+                  y={Math.max(0, by - 4 - bannerH) + fontSize + (bannerPad * 0.3)}
+                  fill="#ffffff"
+                  fontSize={fontSize}
+                  fontWeight="bold"
+                  fontFamily="system-ui, -apple-system, sans-serif"
+                >
+                  {labelText}
+                </text>
+              </g>
+            )
+          })}
+
+          {/* 2. Individual Detection Boxes */}
+          {report.detections?.map((det, idx) => {
+            const [bx, by, bw, bh] = det.bbox
+            let color = '#3cb44b' // Plastic: Green
+            if (det.bantai_category === 'Potentially Hazardous') color = '#e6194b' // Crimson
+            else if (det.bantai_category === 'Paper') color = '#d97706' // Amber/Gold
+            else if (det.bantai_category === 'Metal') color = '#911eb4' // Purple
+            else if (det.bantai_category === 'Organic') color = '#2b9348'
+
+            const labelText = `${det.bantai_category} ${det.model_score.toFixed(2)}`
+            const fontSize = Math.max(13, Math.round(imgW * 0.013))
+            const padY = Math.round(fontSize * 0.3)
+            const badgeH = fontSize + padY * 2
+            const badgeW = labelText.length * (fontSize * 0.56) + 12
+            const badgeY = Math.max(0, by - badgeH)
+
+            return (
+              <g key={`det-${det.detection_id || idx}`}>
+                <rect
+                  x={bx}
+                  y={by}
+                  width={bw}
+                  height={bh}
+                  fill="none"
+                  stroke={color}
+                  strokeWidth={Math.max(2, imgW * 0.002)}
+                  rx="2"
+                />
+                <rect
+                  x={bx}
+                  y={badgeY}
+                  width={badgeW}
+                  height={badgeH}
+                  fill={color}
+                  rx="2"
+                />
+                <text
+                  x={bx + 6}
+                  y={badgeY + fontSize + (padY * 0.2)}
+                  fill="#ffffff"
+                  fontSize={fontSize}
+                  fontWeight="600"
+                  fontFamily="system-ui, -apple-system, sans-serif"
+                >
+                  {labelText}
+                </text>
+              </g>
+            )
+          })}
+        </svg>
+      </div>
     </div>
   )
 }
@@ -64,7 +195,7 @@ export function MyReports({ store }: { store: Store }) {
   return <div className="report-cards">{reports.map(report => {
     const incident = store.incidents.find(i => i.id === report.incidentId)
     return <article className="panel report-card" key={report.id}>
-      <Evidence report={report} />
+      <Evidence report={report} showBoxes={false} />
       <div className="report-card-body">
         <div className="report-meta">
           <span>{report.id}</span>
@@ -75,7 +206,7 @@ export function MyReports({ store }: { store: Store }) {
         <p>{report.description}</p>
         <small>Observed {formatDate(report.observedAt)} · {report.source}</small>
         
-        {/* Model A & Model B Findings */}
+        {/* Model A Trash Findings */}
         {report.regions && report.regions.length > 0 && (
           <div style={{ marginTop: '8px' }}>
             <small style={{ fontWeight: 600, textTransform: 'uppercase', color: '#666' }}>Model A Trash Regions (D-112)</small>
@@ -121,7 +252,7 @@ function ReviewCard({ store, report, onReview }: { store: Store; report: Observa
   const activeTarget = candidates.some(i => i.id === target) ? target : ''
 
   return <article className="panel review-card">
-    <Evidence report={report} />
+    <Evidence report={report} showBoxes={true} />
     <div className="review-body">
       <div className="report-meta">
         <span>{report.id} · {report.reporter}</span>
@@ -182,7 +313,7 @@ function IncidentEditor({ store, id, onUpdate }: { store: Store; id: string; onU
   const [status, setStatus] = useState(incident.status)
   const [note, setNote] = useState(incident.note)
   const evidence = store.observations.filter(o => o.incidentId === id && o.review === 'Validated')
-  return <details className="panel incident-editor"><summary><span><strong>{incident.category}</strong><small>{id} · {incident.location}</small></span><span className="incident-summary-end"><span>{evidence.length} observations</span><Status value={incident.status} /><span aria-hidden="true">⌄</span></span></summary><div className="incident-editor-body"><form onSubmit={e => { e.preventDefault(); if (note.trim()) onUpdate(id, status, note) }}><div className="form-grid"><label className="form-field">Incident status<select value={status} onChange={e => setStatus(e.target.value as IncidentStatus)}>{incidentStatuses.map(s => <option key={s}>{s}</option>)}</select></label><label className="form-field">Update for the reporter<textarea required maxLength={600} rows={2} value={note} onChange={e => setNote(e.target.value)} /></label></div><button className="button button-primary" disabled={!note.trim()}>Save status update</button></form><h3>Consolidated evidence</h3><div className="evidence-list">{evidence.map(o => <div className="evidence-entry" key={o.id}><Evidence report={o} /><div><strong>{o.id}</strong><p>{o.description}</p><small>{o.source} · {formatDate(o.observedAt)} · {o.confidence}% simulated confidence</small></div></div>)}</div></div></details>
+  return <details className="panel incident-editor"><summary><span><strong>{incident.category}</strong><small>{id} · {incident.location}</small></span><span className="incident-summary-end"><span>{evidence.length} observations</span><Status value={incident.status} /><span aria-hidden="true">⌄</span></span></summary><div className="incident-editor-body"><form onSubmit={e => { e.preventDefault(); if (note.trim()) onUpdate(id, status, note) }}><div className="form-grid"><label className="form-field">Incident status<select value={status} onChange={e => setStatus(e.target.value as IncidentStatus)}>{incidentStatuses.map(s => <option key={s}>{s}</option>)}</select></label><label className="form-field">Update for the reporter<textarea required maxLength={600} rows={2} value={note} onChange={e => setNote(e.target.value)} /></label></div><button className="button button-primary" disabled={!note.trim()}>Save status update</button></form><h3>Consolidated evidence</h3><div className="evidence-list">{evidence.map(o => <div className="evidence-entry" key={o.id}><Evidence report={o} showBoxes={true} /><div><strong>{o.id}</strong><p>{o.description}</p><small>{o.source} · {formatDate(o.observedAt)} · {o.confidence}% simulated confidence</small></div></div>)}</div></div></details>
 }
 
 export function Incidents({ store, onUpdate }: { store: Store; onUpdate: (id: string, status: IncidentStatus, note: string) => void }) {
@@ -238,11 +369,9 @@ export function VideoMonitor({
           const regions = frame.trash_findings?.region_list || []
           const defects = frame.road_defect_findings?.defects || []
           const hasPile = regions.some(r => r.category === 'garbage_pile')
-          const hasPothole = defects.length > 0
 
           let obsCat: Category = 'Garbage pile'
           if (hasPile) obsCat = 'Garbage pile'
-          else if (hasPothole) obsCat = 'Pothole'
           else if (regions.length > 0) obsCat = 'Garbage pile'
 
           return {
@@ -253,17 +382,20 @@ export function VideoMonitor({
             category: obsCat,
             observedAt: now,
             submittedAt: now,
-            description: `1.0 FPS extraction frame ${frame.frame_index} (t=${timestamp}s). Single-pass dual-model detection.`,
+            description: `1.0 FPS extraction frame ${frame.frame_index} (t=${timestamp}s). Single-pass Model A trash detection.`,
             photo: frame.frame_url,
             clipTime: `00:${String(Math.floor(frame.timestamp_sec)).padStart(2, '0')}`,
             confidence: 90,
             review: 'Pending review',
             reviewNote: '',
             dualModelResult: result,
+            detections: frame.trash_findings?.detections || [],
             regions,
+            imageWidth: frame.width || 1080,
+            imageHeight: frame.height || 1920,
             defects,
-            hotspotScore: result.hotspot_score,
-            priorityLevel: result.priority_level,
+            hotspotScore: (frame as any).frame_hotspot_score ?? result.hotspot_score,
+            priorityLevel: (frame as any).frame_priority_level ?? result.priority_level,
           }
         })
 
@@ -277,98 +409,41 @@ export function VideoMonitor({
     }
   }
 
-  return (
-    <div className="submit-layout">
-      <section className="panel">
-        <div className="panel-heading">
-          <div>
-            <div className="section-index">PATROL VIDEO INGESTION</div>
-            <h2>Video observation & frame extractor</h2>
-            <p>Upload a street patrol video for single-pass 1.0 FPS frame extraction or run the storyboard simulation.</p>
-          </div>
+  return <section className="panel"><div className="panel-heading"><div><div className="section-index">CAMERA MONITORING</div><h2>Video simulation & media detection</h2><p>Process a real video (.mp4) through Model A or simulate automated patrol captures.</p></div></div>
+    <div className="form-body">
+      {/* Real Video Upload Section */}
+      <div style={{ padding: '16px', background: 'rgba(43, 147, 72, 0.05)', borderRadius: '8px', border: '1px solid #b7e4c7', marginBottom: '20px' }}>
+        <strong style={{ display: 'block', fontSize: '15px', marginBottom: '4px', color: '#1b4332' }}>Run Live Video Detection (Model A)</strong>
+        <p style={{ fontSize: '13px', color: '#40916c', marginBottom: '12px' }}>Upload a street patrol video (e.g., Motion_Extract_Testing_2.mp4). The backend extracts 1.0 FPS frames, runs 3-model consensus + D-112 spatial grouping, and adds confirmed hazard frames to the Review queue.</p>
+        <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+          <input
+            ref={videoInputRef}
+            type="file"
+            accept="video/mp4,video/quicktime,video/webm"
+            style={{ display: 'none' }}
+            onChange={e => setVideoFile(e.target.files?.[0] || null)}
+          />
+          <button type="button" className="button button-outline" onClick={() => videoInputRef.current?.click()}>
+            {videoFile ? `Selected: ${videoFile.name}` : 'Choose video file (.mp4)'}
+          </button>
+          <button
+            type="button"
+            className="button button-primary"
+            disabled={!videoFile || processingVideo}
+            onClick={handleRealVideoProcess}
+          >
+            {processingVideo ? 'Extracting & Running Model A…' : 'Process Video with AI Model'}
+          </button>
         </div>
-        <div className="form-body">
-          {/* Real Video Upload Section */}
-          <div style={{ marginBottom: '20px', padding: '16px', background: '#f8f9fa', borderRadius: '8px', border: '1px solid #e9ecef' }}>
-            <strong style={{ display: 'block', marginBottom: '6px' }}>Upload Real Video (.mp4, .mov, .webm)</strong>
-            <input
-              ref={videoInputRef}
-              type="file"
-              accept="video/mp4,video/webm,video/quicktime"
-              style={{ display: 'none' }}
-              onChange={e => setVideoFile(e.target.files?.[0] || null)}
-            />
-            <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
-              <button type="button" className="button button-outline" onClick={() => videoInputRef.current?.click()}>
-                {videoFile ? videoFile.name : 'Choose Video File'}
-              </button>
-              {videoFile && (
-                <button
-                  type="button"
-                  className="button button-primary"
-                  disabled={processingVideo}
-                  onClick={handleRealVideoProcess}
-                >
-                  {processingVideo ? 'Extracting Frames & Analyzing…' : 'Process Video (1.0 FPS Single-Pass)'}
-                </button>
-              )}
-            </div>
-            {videoError && <p className="form-error" style={{ marginTop: '8px' }}>{videoError}</p>}
-          </div>
+        {videoError && <p className="form-error" style={{ marginTop: '8px' }}>{videoError}</p>}
+      </div>
 
-          <div className="video-storyboard">
-            {['00:04', '00:12', '00:23'].map((time, i) => (
-              <div key={time}>
-                <span className="camera-label">DEMO CAMERA 01</span>
-                <div className="video-road"><span className={`anomaly-box anomaly-${i}`}>{category}</span></div>
-                <strong>{time}</strong>
-                <small>1.0 FPS Extracted Frame</small>
-              </div>
-            ))}
-          </div>
-
-          <div className="form-grid">
-            <label className="form-field">
-              Camera location
-              <select disabled={generated} value={location} onChange={e => setLocation(e.target.value)}>
-                {locations.map(l => <option key={l}>{l}</option>)}
-              </select>
-            </label>
-            <label className="form-field">
-              Simulated detected category
-              <select disabled={generated} value={category} onChange={e => setCategory(e.target.value as Category)}>
-                {categories.map(c => <option key={c}>{c}</option>)}
-              </select>
-            </label>
-          </div>
-
-          <div className="form-actions">
-            <span>{generated ? 'Observations sent to the admin review queue.' : 'Frames → pending observations'}</span>
-            {generated ? (
-              <button className="button button-primary" onClick={onReview}>Review video observations</button>
-            ) : (
-              <button
-                className="button button-primary"
-                onClick={() => {
-                  onGenerate(location, category)
-                  setGenerated(true)
-                }}
-              >
-                Simulate clip processing
-              </button>
-            )}
-          </div>
-          {generated && <button className="text-button" onClick={() => setGenerated(false)}>Set up another clip</button>}
-        </div>
-      </section>
-
-      <aside className="panel guidance-panel">
-        <div className="section-index">SINGLE-PASS INGESTION</div>
-        <h2>1.0 FPS Video Extraction</h2>
-        <p>Uploaded video files are sampled ONCE at 1.0 FPS RGB JPEGs into a shared session directory. Both Model A (Trash Detector) and Model B (Road Defects) run on the exact same frames.</p>
-        <p>Review the generated observations and link matching frames to the same incident. Each validated observation updates municipal priority frequency.</p>
-        <p className="prototype-note">Model A 3-Model Consensus & Model B RF-DETR Nano run sequentially to preserve GPU VRAM.</p>
-      </aside>
+      <div className="field-label">Simulated Camera Location</div>
+      <label className="form-field"><select value={location} onChange={e => setLocation(e.target.value)}>{locations.map(l => <option key={l}>{l}</option>)}</select></label>
+      <div className="field-label">Issue Category</div>
+      <label className="form-field"><select value={category} onChange={e => setCategory(e.target.value as Category)}>{categories.map(c => <option key={c}>{c}</option>)}</select></label>
+      <div className="video-storyboard"><div><span>00:04</span><strong>Frame capture</strong><small>Wide angle scan</small></div><div><span>00:12</span><strong>Anomaly flagged</strong><small>Model threshold passed</small></div><div><span>00:23</span><strong>Scene verified</strong><small>Added to review queue</small></div></div>
+      <div className="review-actions"><button className="button button-primary" onClick={() => { onGenerate(location, category); setGenerated(true) }}>Generate simulated batch</button>{generated && <button className="button button-outline" onClick={onReview}>Go to review queue</button>}</div>
     </div>
-  )
+  </section>
 }

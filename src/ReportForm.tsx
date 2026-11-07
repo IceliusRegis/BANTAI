@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { categories, locations } from './incidents'
-import type { Category, NewReport, UnifiedIncidentResponse, TrashRegion, RoadDefect } from './incidents'
+import type { Category, NewReport, UnifiedIncidentResponse, TrashRegion, TrashDetection, RoadDefect } from './incidents'
 
 function localTime() {
   const date = new Date()
@@ -88,7 +88,10 @@ export default function ReportForm({ onSubmit }: { onSubmit: (report: ReportSubm
     }
 
     let dualModelResult: UnifiedIncidentResponse | undefined = undefined
+    let detections: TrashDetection[] | undefined = undefined
     let regions: TrashRegion[] | undefined = undefined
+    let imageWidth: number | undefined = undefined
+    let imageHeight: number | undefined = undefined
     let defects: RoadDefect[] | undefined = undefined
     let hotspotScore: number | undefined = undefined
     let priorityLevel: 'CRITICAL' | 'ELEVATED' | 'ROUTINE' | undefined = undefined
@@ -97,7 +100,7 @@ export default function ReportForm({ onSubmit }: { onSubmit: (report: ReportSubm
     // Attempt live API dual-model analysis if a real file was uploaded
     if (selectedFile) {
       setLoading(true)
-      setAnalyzingStatus('Running dual-model AI analysis (Model A: Trash + Model B: Potholes)…')
+      setAnalyzingStatus('Running BANTAI Trash Detection & Spatial Grouping (Model A)…')
       try {
         const formData = new FormData()
         formData.append('file', selectedFile)
@@ -115,7 +118,10 @@ export default function ReportForm({ onSubmit }: { onSubmit: (report: ReportSubm
           hotspotScore = data.hotspot_score
           priorityLevel = data.priority_level
           if (data.frames && data.frames.length > 0) {
+            detections = data.frames[0].trash_findings?.detections || []
             regions = data.frames[0].trash_findings?.region_list || []
+            imageWidth = data.frames[0].width
+            imageHeight = data.frames[0].height
             defects = data.frames[0].road_defect_findings?.defects || []
             if (!primaryPhoto && data.frames[0].frame_url) {
               primaryPhoto = data.frames[0].frame_url
@@ -137,7 +143,10 @@ export default function ReportForm({ onSubmit }: { onSubmit: (report: ReportSubm
       description: description.trim(),
       photo: primaryPhoto || undefined,
       dualModelResult,
+      detections,
       regions,
+      imageWidth,
+      imageHeight,
       defects,
       hotspotScore,
       priorityLevel,

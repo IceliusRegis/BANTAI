@@ -4,6 +4,9 @@ Strictly enforces:
 - 9 active supervised classes locked to 0..8
 - 5 canonical BANTAI categories (Plastic, Paper, Organic, Metal, Potentially Hazardous)
 - 3-Model Consensus (Baseline, Stage 5 Run 1, D-095 Champion)
+- Calibrated Stage 5 consensus parameters:
+    delta=0.016, coactivation="3 plastic subtypes >= 0.20", confidence_mode="top1_score",
+    enable_rule1..7=True
 - Calibrated score threshold 0.15, top_k 25, containment NMS
 - D-112 Disjoint Spatial Grouping:
     k = 1 -> individual_litter (model_score = float)
@@ -22,7 +25,7 @@ from typing import Any, Dict, List, Optional
 # Add BANTAI-Modeling- root to sys.path
 MODELING_ROOT = Path(os.environ.get(
     "BANTAI_MODELING_ROOT",
-    r"C:\Users\Samuel\Desktop\IA-MODEL TRAINING\BANTAI-Modeling-"
+    r"c:\Users\Justine\Documents\Python\Project Image-object Detection"
 ))
 if MODELING_ROOT.is_dir() and str(MODELING_ROOT) not in sys.path:
     sys.path.insert(0, str(MODELING_ROOT))
@@ -60,6 +63,9 @@ class BantaiTrashService:
         self.repo_root = Path(repo_root or MODELING_ROOT)
         self.device = device or ("cuda" if self._has_cuda() else "cpu")
         self.checkpoints_ready = self._verify_checkpoints()
+        self.cache_file = Path(__file__).resolve().parent / "trash_inference_cache.json"
+        self._cache = self._load_cache()
+        self._showcase_data = self._load_showcase()
 
     @staticmethod
     def _has_cuda() -> bool:
@@ -87,6 +93,33 @@ class BantaiTrashService:
     def is_fully_available(self) -> bool:
         return all(self.checkpoints_ready.values())
 
+    def _load_cache(self) -> Dict[str, Any]:
+        if self.cache_file.is_file():
+            try:
+                with open(self.cache_file, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                return {}
+        return {}
+
+    def _save_cache(self) -> None:
+        try:
+            with open(self.cache_file, "w", encoding="utf-8") as f:
+                json.dump(self._cache, f, indent=2)
+        except Exception as e:
+            print(f"[BantaiTrashService] Warning: failed to save cache ({e})", flush=True)
+
+    def _load_showcase(self) -> Optional[Dict[str, Any]]:
+        """Load precomputed showcase from modeling repo for zero-latency video/still replay."""
+        sc_path = self.repo_root / "runs/video_detection/motion_extract_testing/video-showcase.json"
+        if sc_path.is_file():
+            try:
+                with open(sc_path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                return None
+        return None
+
     def run_on_frames(
         self,
         frame_entries: List[Dict[str, Any]],
@@ -96,15 +129,81 @@ class BantaiTrashService:
     ) -> List[Dict[str, Any]]:
         """Run 3-model detection, scene consensus, and D-112 spatial grouping on extracted frames."""
         frames_dir = Path(frames_dir)
+        from scripts.taco_stage5_display_profiles import visible_rows
+        from scripts.taco_stage5_spatial_grouping import compute_spatial_grouping, DEFAULT_MIN_PILE_ITEMS
 
-        # Check if live inference libraries & weights are ready
+        # 1. Fast Cache / Showcase Resolution
+        frame_results: List[Optional[Dict[str, Any]]] = [None] * len(frame_entries)
+        unresolved_entries: List[Dict[str, Any]] = []
+        unresolved_indices: List[int] = []
+
+        for idx, entry in enumerate(frame_entries):
+            sha = entry.get("file_sha256", "")
+            fname = entry.get("file_name", "")
+            img_id_str = str(entry.get("id", ""))
+            w, h = entry.get("width", 1280), entry.get("height", 720)
+
+            # Check persistent cache by SHA-256
+            if sha and sha in self._cache:
+                cached_data = self._cache[sha]
+                frame_results[idx] = self._format_frame_findings(entry, cached_data["detections"], cached_data["grouping"])
+                continue
+
+            # Check video-showcase.json by sha or filename/id
+            matched_pred = None
+            if self._showcase_data and "predictions" in self._showcase_data:
+                consensus_dict = self._showcase_data["predictions"].get("D-095 + Consensus", {})
+                images_dict = self._showcase_data.get("images", {})
+
+                # Match by image sha in showcase images
+                for sc_id, sc_img in images_dict.items():
+                    if sc_img.get("file_sha256") == sha or sc_img.get("file_name") == fname:
+                        if sc_id in consensus_dict:
+                            matched_pred = consensus_dict[sc_id]
+                            break
+
+                # Match by direct id if not matched by sha
+                if not matched_pred and img_id_str in consensus_dict:
+                    matched_pred = consensus_dict[img_id_str]
+
+            if matched_pred is not None:
+                vis = visible_rows(
+                    matched_pred,
+                    scheme="9-specific",
+                    nms_mode="agnostic_iou_0.50_containment_0.80",
+                    threshold=score_threshold,
+                )[:top_k]
+                grp = compute_spatial_grouping(vis, image_width=w, image_height=h, min_pile_items=DEFAULT_MIN_PILE_ITEMS)
+                # Store in persistent cache
+                if sha:
+                    self._cache[sha] = {"detections": vis, "grouping": grp}
+                    self._save_cache()
+                frame_results[idx] = self._format_frame_findings(entry, vis, grp)
+                continue
+
+            unresolved_entries.append(entry)
+            unresolved_indices.append(idx)
+
+        # 2. If all frames were resolved from cache/showcase, return immediately
+        if not unresolved_entries:
+            return [res for res in frame_results if res is not None]
+
+        # 3. Live 3-Model GPU Inference on Unresolved Entries
         if self.is_fully_available():
             try:
-                return self._run_live_inference(frame_entries, frames_dir, score_threshold, top_k)
+                live_findings = self._run_live_inference(unresolved_entries, frames_dir, score_threshold, top_k)
+                for pos, res in zip(unresolved_indices, live_findings):
+                    frame_results[pos] = res
             except Exception as exc:
-                print(f"[BantaiTrashService] Live inference failed ({exc}), falling back to structured mock.", flush=True)
+                print(f"[BantaiTrashService] Live inference error: {exc}", flush=True)
+                for pos in unresolved_indices:
+                    frame_results[pos] = self._run_empty_findings(frame_entries[pos])
+        else:
+            print("[BantaiTrashService] Warning: Checkpoints not fully available. Returning empty findings.", flush=True)
+            for pos in unresolved_indices:
+                frame_results[pos] = self._run_empty_findings(frame_entries[pos])
 
-        return self._run_fallback_detection(frame_entries, frames_dir)
+        return [res for res in frame_results if res is not None]
 
     def _run_live_inference(
         self,
@@ -125,22 +224,34 @@ class BantaiTrashService:
         for entry in frame_entries:
             img_id = entry["id"]
             w, h = entry["width"], entry["height"]
+            sha = entry.get("file_sha256", "")
 
             d095_rows = inference_results["D-095 Champion (soup 50/50)"][img_id]
             d095_svec = inference_results["d095_scores"][img_id]
             base_rows = inference_results["Baseline"][img_id]
             run1_rows = inference_results["Stage 5 (256/384)"][img_id]
 
+            # Exact Stage 5 D-111/D-112 Consensus Parameters
             c_rows, _, _ = apply_scene_consensus(
                 d095_rows,
                 d095_svec,
                 image_width=w,
                 image_height=h,
+                delta=0.016,
+                coactivation="3 plastic subtypes >= 0.20",
+                confidence_mode="top1_score",
+                enable_rule1=True,
+                enable_rule2=True,
+                enable_rule3=True,
+                enable_rule4=True,
+                enable_rule5=True,
+                enable_rule6=True,
+                enable_rule7=True,
                 baseline_rows=base_rows,
                 run1_rows=run1_rows,
             )
 
-            # Strict 9-specific scheme, calibrated score >= 0.15, NMS top_k
+            # Strict 9-specific scheme, calibrated score >= 0.15, containment NMS
             filtered = visible_rows(
                 c_rows,
                 scheme="9-specific",
@@ -150,6 +261,11 @@ class BantaiTrashService:
 
             # D-112 Disjoint Spatial Grouping
             grouping = compute_spatial_grouping(filtered, image_width=w, image_height=h, min_pile_items=DEFAULT_MIN_PILE_ITEMS)
+
+            # Cache the result
+            if sha:
+                self._cache[sha] = {"detections": filtered, "grouping": grouping}
+                self._save_cache()
 
             frame_results.append(self._format_frame_findings(entry, filtered, grouping))
 
@@ -174,7 +290,7 @@ class BantaiTrashService:
         formatted_detections = []
         for idx, row in enumerate(detections):
             cid = int(row.get("category_id", 0))
-            cid = cid if cid in SUPERVISED_LABELS else 1  # Fallback to plastic_bottle
+            cid = cid if cid in SUPERVISED_LABELS else 1
             formatted_detections.append({
                 "detection_id": idx + 1,
                 "category_id": cid,
@@ -234,45 +350,23 @@ class BantaiTrashService:
             "detections": formatted_detections,
         }
 
-    def _run_fallback_detection(
-        self,
-        frame_entries: List[Dict[str, Any]],
-        frames_dir: Path,
-    ) -> List[Dict[str, Any]]:
-        """Provides schema-compliant demonstration findings when checkpoints are not loaded."""
-        results = []
-        for entry in frame_entries:
-            w, h = entry.get("width", 1280), entry.get("height", 720)
-            # Default realistic sample detections
-            sample_dets = [
-                {"category_id": 1, "score": 0.88, "bbox": [w * 0.38, h * 0.58, w * 0.08, h * 0.12]},
-                {"category_id": 3, "score": 0.74, "bbox": [w * 0.42, h * 0.62, w * 0.06, h * 0.08]},
-                {"category_id": 8, "score": 0.65, "bbox": [w * 0.36, h * 0.64, w * 0.07, h * 0.07]},
-            ]
-            try:
-                from scripts.taco_stage5_spatial_grouping import compute_spatial_grouping, DEFAULT_MIN_PILE_ITEMS
-                grouping = compute_spatial_grouping(sample_dets, image_width=w, image_height=h, min_pile_items=DEFAULT_MIN_PILE_ITEMS)
-            except Exception:
-                grouping = {
-                    "regions": [
-                        {
-                            "group_id": 0,
-                            "category": "group_of_individual_litter",
-                            "label": "Group of Individual Litter",
-                            "bbox": [w * 0.36, h * 0.58, w * 0.14, h * 0.15],
-                            "item_count": 3,
-                            "model_score": None,
-                            "member_indices": [0, 1, 2],
-                        }
-                    ],
-                    "summary": {
-                        "total_physical_items": 3,
-                        "total_regions": 1,
-                        "individual_litter_count": 0,
-                        "group_of_individual_litter_count": 1,
-                        "garbage_pile_count": 0,
-                    },
-                }
-
-            results.append(self._format_frame_findings(entry, sample_dets, grouping))
-        return results
+    def _run_empty_findings(self, entry: Dict[str, Any]) -> Dict[str, Any]:
+        """Returns clean empty findings when no detections are made or in error states."""
+        return {
+            "model_version": "BANTAI-Stage5-D095-Soup5050",
+            "total_items": 0,
+            "regions": {
+                "garbage_piles": 0,
+                "groups_of_litter": 0,
+                "individual_items": 0,
+            },
+            "items_by_bantai_category": {
+                "Plastic": 0,
+                "Paper": 0,
+                "Metal": 0,
+                "Potentially Hazardous": 0,
+                "Organic": 0,
+            },
+            "region_list": [],
+            "detections": [],
+        }

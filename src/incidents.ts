@@ -94,7 +94,10 @@ export type Observation = {
   photo?: string; clipTime?: string; confidence: number;
   review: 'Pending review' | 'Validated' | 'Rejected'; incidentId?: string; reviewNote: string;
   dualModelResult?: UnifiedIncidentResponse;
+  detections?: TrashDetection[];
   regions?: TrashRegion[];
+  imageWidth?: number;
+  imageHeight?: number;
   defects?: RoadDefect[];
   hotspotScore?: number;
   priorityLevel?: 'CRITICAL' | 'ELEVATED' | 'ROUTINE';
@@ -120,7 +123,7 @@ export function computeHotspotScore(
 export type Incident = { id: string; category: Category; location: string; status: IncidentStatus; note: string; updatedAt: string }
 export type Store = { observations: Observation[]; incidents: Incident[] }
 export type RankedIncident = Incident & { frequency: number; latest: string }
-export type NewReport = Pick<Observation, 'location' | 'category' | 'observedAt' | 'description' | 'photo'>
+export type NewReport = Pick<Observation, 'location' | 'category' | 'observedAt' | 'description' | 'photo' | 'dualModelResult' | 'detections' | 'regions' | 'imageWidth' | 'imageHeight' | 'defects' | 'hotspotScore' | 'priorityLevel'>
 export const residentId = 'Demo resident'
 export function normalizeLocation(value: string) { return value.trim().replace(/\s+/g, ' ').toLowerCase() }
 

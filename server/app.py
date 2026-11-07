@@ -44,16 +44,16 @@ async def health_check(request: Request) -> JSONResponse:
             "device": trash_service.device,
         },
         "model_b_pothole": {
-            "name": "RF-DETR Nano Road Defect Detector",
-            "weights_file": pothole_service.weights_path,
-            "weights_present": pothole_service.is_weights_present(),
-            "device": pothole_service.device,
+            "name": "RF-DETR Nano Road Defect Detector (Disabled for Model A Focus)",
+            "status": "disabled",
+            "weights_present": False,
+            "device": "none",
         },
     })
 
 
 async def analyze_media(request: Request) -> JSONResponse:
-    """Single-pass media upload, 1.0 FPS extraction, Model A + Model B analysis."""
+    """Single-pass media upload, 1.0 FPS extraction, Model A analysis with Model B disabled."""
     form = await request.form()
     uploaded_file = form.get("file")
     if not uploaded_file or not hasattr(uploaded_file, "filename"):
@@ -99,14 +99,13 @@ async def analyze_media(request: Request) -> JSONResponse:
             top_k=25,
         )
 
-        # Step 3: Model B (Pothole Detection)
-        road_findings = pothole_service.run_on_frames(
-            frame_entries=frame_entries,
-            frames_dir=frames_dir,
-            is_video=is_video,
-        )
+        # Step 3: Model B (Pothole Detection) - Disabled for Model A Focus
+        road_findings = [
+            {"model_version": "disabled", "total_defects": 0, "defects": []}
+            for _ in frame_entries
+        ]
 
-        # Step 4: Fusion & Hotspot Prioritization
+        # Step 4: Fusion & Hotspot Prioritization (with Smart Frame Filtering)
         unified_response = fuse_dual_model_incident(
             incident_id=incident_id,
             media_meta=media_meta,
@@ -120,6 +119,8 @@ async def analyze_media(request: Request) -> JSONResponse:
         return JSONResponse(unified_response)
 
     except Exception as exc:
+        import traceback
+        traceback.print_exc()
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
@@ -148,4 +149,4 @@ middleware = [
     )
 ]
 
-app = Starlette(routes=routes, middleware=middleware)
+app = Starlette(debug=True, routes=routes, middleware=middleware)

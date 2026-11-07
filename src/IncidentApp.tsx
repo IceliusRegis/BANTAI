@@ -26,7 +26,46 @@ export default function IncidentApp() {
       <p>Report garbage piles, potholes, and road surface damage. Follow each report from review to resolution.</p>
       <div className="dashboard-note">Demo mode switch · Both roles share this session. Detection is simulated. Refreshing resets the demo.</div>
       {notice && <div className="notice" role="status">{notice}</div>}
-      {page === 'submit' && mode === 'user' && <ReportForm onSubmit={report => { const id = `OBS-${crypto.randomUUID().slice(0, 8).toUpperCase()}`; setStore(s => addResidentReport(s, report, id, new Date().toISOString())); setPage('mine'); setNotice(`${id} submitted. Switch to Admin to review it.`) }} />}
+      {page === 'submit' && mode === 'user' && (
+        <ReportForm
+          onSubmit={report => {
+            const now = new Date().toISOString()
+            const baseId = `OBS-${crypto.randomUUID().slice(0, 8).toUpperCase()}`
+            const frames = report.dualModelResult?.frames
+            if (frames && frames.length > 1) {
+              const multiObs = frames.map((frame, idx) => ({
+                id: `${baseId}-${idx + 1}`,
+                reporter: residentId,
+                source: 'Resident photo' as const,
+                location: report.location.trim(),
+                category: report.category,
+                observedAt: report.observedAt,
+                submittedAt: now,
+                description: `${report.description.trim()} [Frame ${frame.frame_index} @ ${frame.timestamp_sec.toFixed(1)}s]`,
+                photo: frame.frame_url,
+                clipTime: `00:${String(Math.floor(frame.timestamp_sec)).padStart(2, '0')}`,
+                confidence: 92,
+                review: 'Pending review' as const,
+                reviewNote: '',
+                dualModelResult: report.dualModelResult,
+                detections: frame.trash_findings?.detections || [],
+                regions: frame.trash_findings?.region_list || [],
+                imageWidth: frame.width || 1080,
+                imageHeight: frame.height || 1920,
+                hotspotScore: (frame as any).frame_hotspot_score ?? report.hotspotScore,
+                priorityLevel: (frame as any).frame_priority_level ?? report.priorityLevel,
+              }))
+              setStore(s => ({ ...s, observations: [...multiObs, ...s.observations] }))
+              setPage('mine')
+              setNotice(`${frames.length} video frame observations submitted. Switch to Admin to review.`)
+            } else {
+              setStore(s => addResidentReport(s, report, baseId, now))
+              setPage('mine')
+              setNotice(`${baseId} submitted. Switch to Admin to review it.`)
+            }
+          }}
+        />
+      )}
       {page === 'mine' && mode === 'user' && <MyReports store={store} />}
       {page === 'review' && mode === 'admin' && <ReviewQueue store={store} onReview={(id, decision, target, note) => { setStore(s => reviewReport(s, id, decision, target, note, new Date().toISOString(), `INC-${crypto.randomUUID().slice(0, 8).toUpperCase()}`)); setNotice(decision === 'reject' ? 'Report rejected. The reporter can see your explanation.' : 'Report validated. Incident frequency and hotspot rankings updated.') }} />}
       {page === 'incidents' && mode === 'admin' && <Incidents store={store} onUpdate={(id, status, note) => { setStore(s => updateIncident(s, id, status, note, new Date().toISOString())); setNotice(`${id} updated to ${status}. Switch to Regular user to see the update.`) }} />}
